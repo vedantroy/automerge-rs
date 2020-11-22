@@ -5,6 +5,7 @@ use automerge_protocol::{
 use crate::error::InvalidPatch;
 use crate::object::{Object, Values};
 use crate::Value;
+use crate::state_tree::StateTreeRoot;
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 /// A `ChangeContext` represents some kind of change which has not been applied
@@ -19,16 +20,18 @@ use std::{cell::RefCell, collections::HashMap, rc::Rc};
 /// by accumulating all the changes in a separate set of objects, then only
 /// actually mutating the original object set (which you will note is captured
 /// by mutable reference) when `commit` is called.
-pub struct ChangeContext<'a> {
+pub(crate) struct ChangeContext<'a> {
     original_objects: &'a mut HashMap<ObjectID, Rc<Object>>,
+    root_state: StateTreeRoot,
     updated: RefCell<HashMap<ObjectID, Rc<RefCell<Object>>>>,
 }
 
 impl<'a> ChangeContext<'a> {
-    pub fn new(original_objects: &'a mut HashMap<ObjectID, Rc<Object>>) -> ChangeContext {
+    pub(crate) fn new(original_objects: &'a mut HashMap<ObjectID, Rc<Object>>, original_root_state: StateTreeRoot) -> ChangeContext {
         ChangeContext {
             original_objects,
             updated: RefCell::new(HashMap::new()),
+            root_state: original_root_state,
         }
     }
 
@@ -124,6 +127,7 @@ impl<'a> ChangeContext<'a> {
     ///
     pub fn apply_diff(&mut self, diff: &Diff) -> Result<(), InvalidPatch> {
         Self::apply_diff_helper(&self.original_objects, &self.updated, diff)?;
+        self.root_state = self.root_state.apply_diff(diff)?;
         Ok(())
     }
 
@@ -175,7 +179,7 @@ impl<'a> ChangeContext<'a> {
                             o => {
                                 return Err(InvalidPatch::MismatchingObjectType {
                                     object_id: object_id.clone(),
-                                    expected_type: ObjType::Map(MapType::Map),
+                                    patch_expected_type: Some(ObjType::Map(MapType::Map)),
                                     actual_type: o.obj_type(),
                                 })
                             }
@@ -223,7 +227,7 @@ impl<'a> ChangeContext<'a> {
                             o => {
                                 return Err(InvalidPatch::MismatchingObjectType {
                                     object_id: object_id.clone(),
-                                    expected_type: ObjType::Map(MapType::Table),
+                                    patch_expected_type: Some(ObjType::Map(MapType::Table)),
                                     actual_type: o.obj_type(),
                                 })
                             }
@@ -275,7 +279,7 @@ impl<'a> ChangeContext<'a> {
                         o => {
                             return Err(InvalidPatch::MismatchingObjectType {
                                 object_id: object_id.clone(),
-                                expected_type: ObjType::Sequence(SequenceType::List),
+                                patch_expected_type: Some(ObjType::Sequence(SequenceType::List)),
                                 actual_type: o.obj_type(),
                             })
                         }
@@ -319,7 +323,7 @@ impl<'a> ChangeContext<'a> {
                         o => {
                             return Err(InvalidPatch::MismatchingObjectType {
                                 object_id: object_id.clone(),
-                                expected_type: ObjType::Sequence(SequenceType::Text),
+                                patch_expected_type: Some(ObjType::Sequence(SequenceType::Text)),
                                 actual_type: o.obj_type(),
                             })
                         }
@@ -385,13 +389,14 @@ impl<'a> ChangeContext<'a> {
         self.original_objects.get(object_id).cloned()
     }
 
-    pub fn commit(self) -> Value {
+    pub(crate) fn commit(self) -> (Value, StateTreeRoot) {
         for (object_id, object) in self.updated.into_inner().into_iter() {
             let cloned_object = object.borrow().clone();
             self.original_objects
                 .insert(object_id.clone(), Rc::new(cloned_object));
         }
         // The root ID must be in result by this point so we can unwrap
-        self.original_objects.get(&ObjectID::Root).unwrap().value()
+        let value = self.original_objects.get(&ObjectID::Root).unwrap().value();
+        (value, self.root_state)
     }
 }

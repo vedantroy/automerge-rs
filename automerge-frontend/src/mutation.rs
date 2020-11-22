@@ -139,7 +139,7 @@ pub struct MutationTracker<'a, 'b> {
 }
 
 impl<'a, 'b> MutationTracker<'a, 'b> {
-    pub fn new(change_context: &'a mut ChangeContext<'b>) -> MutationTracker<'a, 'b> {
+    pub(crate) fn new(change_context: &'a mut ChangeContext<'b>) -> MutationTracker<'a, 'b> {
         MutationTracker {
             change_context,
             ops: Vec::new(),

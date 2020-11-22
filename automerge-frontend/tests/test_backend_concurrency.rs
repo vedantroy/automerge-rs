@@ -557,7 +557,7 @@ fn allow_interleacing_of_patches_and_changes() {
     );
 
     let mut backend = Backend::init();
-    let patch1 = backend.apply_local_change(req1).unwrap();
+    let (patch1, _) = backend.apply_local_change(req1).unwrap();
     doc.apply_patch(patch1).unwrap();
 
     let req3 = doc

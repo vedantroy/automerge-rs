@@ -5,7 +5,7 @@ use automerge_protocol::{
 use crate::error::InvalidPatch;
 use crate::object::{Object, Values};
 use crate::Value;
-use crate::state_tree::StateTreeRoot;
+use crate::state_tree::StateTree;
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 /// A `ChangeContext` represents some kind of change which has not been applied
@@ -22,12 +22,12 @@ use std::{cell::RefCell, collections::HashMap, rc::Rc};
 /// by mutable reference) when `commit` is called.
 pub(crate) struct ChangeContext<'a> {
     original_objects: &'a mut HashMap<ObjectID, Rc<Object>>,
-    root_state: StateTreeRoot,
+    root_state: StateTree,
     updated: RefCell<HashMap<ObjectID, Rc<RefCell<Object>>>>,
 }
 
 impl<'a> ChangeContext<'a> {
-    pub(crate) fn new(original_objects: &'a mut HashMap<ObjectID, Rc<Object>>, original_root_state: StateTreeRoot) -> ChangeContext {
+    pub(crate) fn new(original_objects: &'a mut HashMap<ObjectID, Rc<Object>>, original_root_state: StateTree) -> ChangeContext {
         ChangeContext {
             original_objects,
             updated: RefCell::new(HashMap::new()),
@@ -389,7 +389,7 @@ impl<'a> ChangeContext<'a> {
         self.original_objects.get(object_id).cloned()
     }
 
-    pub(crate) fn commit(self) -> (Value, StateTreeRoot) {
+    pub(crate) fn commit(self) -> (Value, StateTree) {
         for (object_id, object) in self.updated.into_inner().into_iter() {
             let cloned_object = object.borrow().clone();
             self.original_objects

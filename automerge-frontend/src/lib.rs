@@ -6,12 +6,14 @@ mod mutation;
 mod object;
 mod value;
 mod state_tree;
+mod path;
 
 pub use error::{
     AutomergeFrontendError, InvalidChangeRequest, InvalidInitialStateError, InvalidPatch,
 };
-use mutation::PathElement;
-pub use mutation::{LocalChange, MutableDocument, Path};
+use path::PathElement;
+pub use path::Path;
+pub use mutation::{LocalChange, MutableDocument};
 use object::Object;
 use std::convert::TryFrom;
 use std::error::Error;
@@ -48,13 +50,13 @@ enum FrontendState {
     WaitingForInFlightRequests {
         in_flight_requests: Vec<u64>,
         reconciled_objects: HashMap<ObjectID, Rc<Object>>,
-        reconciled_root_state: state_tree::StateTreeRoot,
+        reconciled_root_state: state_tree::StateTree,
         optimistically_updated_objects: HashMap<ObjectID, Rc<Object>>,
-        optimistically_updated_root_state: state_tree::StateTreeRoot,
+        optimistically_updated_root_state: state_tree::StateTree,
     },
     Reconciled {
         objects: HashMap<ObjectID, Rc<Object>>,
-        root_state: state_tree::StateTreeRoot,
+        root_state: state_tree::StateTree,
     },
 }
 
@@ -261,7 +263,7 @@ impl Frontend {
             ObjectID::Root,
             Rc::new(Object::Map(ObjectID::Root, HashMap::new(), MapType::Map)),
         );
-        let root_state = state_tree::StateTreeRoot::new();
+        let root_state = state_tree::StateTree::new();
         Frontend {
             actor_id: ActorID::random(),
             seq: 0,

@@ -2,71 +2,14 @@ use crate::change_context::ChangeContext;
 use crate::error::InvalidChangeRequest;
 use crate::object::Object;
 use crate::value::{random_op_id, value_to_op_requests, Value};
+use crate::{Path, PathElement};
 use automerge_protocol as amp;
 use maplit::hashmap;
-use std::{collections::HashMap, fmt, rc::Rc};
+use std::{collections::HashMap, rc::Rc};
 
 pub trait MutableDocument {
     fn value_at_path(&self, path: &Path) -> Option<Value>;
     fn add_change(&mut self, change: LocalChange) -> Result<(), InvalidChangeRequest>;
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) enum PathElement {
-    Key(String),
-    Index(usize),
-}
-
-impl PathElement {
-    pub(crate) fn to_request_key(&self) -> amp::RequestKey {
-        match self {
-            PathElement::Key(s) => amp::RequestKey::Str(s.into()),
-            PathElement::Index(i) => amp::RequestKey::Num(*i as u64),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct Path(Vec<PathElement>);
-
-impl Path {
-    pub fn root() -> Path {
-        Path(Vec::new())
-    }
-
-    pub fn index(mut self, index: usize) -> Self {
-        self.0.push(PathElement::Index(index));
-        self
-    }
-
-    pub fn key<S: Into<String>>(mut self, key: S) -> Path {
-        self.0.push(PathElement::Key(key.into()));
-        self
-    }
-
-    pub fn parent(&self) -> Self {
-        if self.0.is_empty() {
-            Path(Vec::new())
-        } else {
-            let mut new_path = self.0.clone();
-            new_path.pop();
-            Path(new_path)
-        }
-    }
-
-    /// Get the final component of the path, if any
-    pub(crate) fn name(&self) -> Option<&PathElement> {
-        self.0.last()
-    }
-}
-
-impl fmt::Display for PathElement {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            PathElement::Key(k) => write!(f, "{}", k),
-            PathElement::Index(i) => write!(f, "{}", i),
-        }
-    }
 }
 
 pub(crate) enum LocalOperation {
@@ -159,7 +102,7 @@ impl<'a, 'b> MutationTracker<'a, 'b> {
     }
 
     fn value_for_path<'c>(&'a self, path: &'c Path) -> Option<Rc<Object>> {
-        let mut stack = path.clone().0;
+        let mut stack = path.clone().elements();
         stack.reverse();
         let mut current_obj: Rc<Object> = self
             .change_context
@@ -253,7 +196,7 @@ impl<'a, 'b> MutationTracker<'a, 'b> {
         let mut intermediates: Vec<Intermediate> = Vec::new();
 
         // This is just the logic for reducing the path
-        let mut stack = path.0.clone();
+        let mut stack = path.clone().elements();
         stack.reverse();
         let mut current_obj: Rc<Object> = self
             .change_context
@@ -548,7 +491,7 @@ pub(crate) fn resolve_path(
     path: &Path,
     objects: &HashMap<amp::ObjectID, Rc<Object>>,
 ) -> Option<Rc<Object>> {
-    let mut stack = path.clone().0;
+    let mut stack = path.clone().elements();
     stack.reverse();
     let mut current_obj: Rc<Object> = objects.get(&amp::ObjectID::Root).unwrap().clone();
     while let Some(next_elem) = stack.pop() {

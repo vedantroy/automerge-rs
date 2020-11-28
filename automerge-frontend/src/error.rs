@@ -1,4 +1,4 @@
-use crate::mutation::Path;
+use crate::Path;
 use crate::value::Value;
 use automerge_protocol as amp;
 use automerge_protocol::ObjectID;

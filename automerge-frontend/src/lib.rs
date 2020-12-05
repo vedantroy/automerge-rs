@@ -15,6 +15,7 @@ use path::PathElement;
 pub use path::Path;
 pub use mutation::{LocalChange, MutableDocument};
 use object::Object;
+use state_tree::PathResolution;
 use std::convert::TryFrom;
 use std::error::Error;
 use std::time;
@@ -143,18 +144,22 @@ impl FrontendState {
     }
 
     fn get_object_id(&self, path: &Path) -> Option<ObjectID> {
-        self.get_object(path).and_then(|o| o.id())
+        self.resolve_path(path).and_then(|r| r.object_id)
     }
 
-    fn get_object(&self, path: &Path) -> Option<Rc<Object>> {
-        let objects = match self {
-            FrontendState::WaitingForInFlightRequests {
-                optimistically_updated_objects,
+    fn get_value(&self, path: &Path) -> Option<Value> {
+        self.resolve_path(path).map(|r| r.default_value())
+    }
+
+    fn resolve_path(&self, path: &Path) -> Option<PathResolution> {
+        let root = match self {
+            FrontendState::WaitingForInFlightRequests{
+                optimistically_updated_root_state,
                 ..
-            } => optimistically_updated_objects,
-            FrontendState::Reconciled { objects, .. } => objects,
+            } => optimistically_updated_root_state,
+            FrontendState::Reconciled{ root_state, .. } => root_state,
         };
-        mutation::resolve_path(path, objects)
+        root.resolve_path(path)
     }
 
     /// Apply a patch. The change closure will be passed a `MutableDocument`
@@ -394,23 +399,14 @@ impl Frontend {
     pub fn get_conflicts(&self, path: &Path) -> Option<HashMap<OpID, Value>> {
         self.state
             .as_ref()
-            .and_then(|s| s.get_object(&path.parent()))
-            .and_then(|o| match (&*o, path.name()) {
-                (Object::Map(_, vals, _), Some(PathElement::Key(k))) => {
-                    vals.get(k.as_str()).map(|values| values.conflicts())
-                }
-                (Object::Sequence(_, vals, _), Some(PathElement::Index(i))) => vals
-                    .get(*i)
-                    .and_then(|mvalues| mvalues.as_ref().map(|values| values.conflicts())),
-                _ => None,
-            })
+            .and_then(|s| s.resolve_path(path))
+            .map(|o| o.values())
     }
 
     pub fn get_value(&self, path: &Path) -> Option<Value> {
         self.state
             .as_ref()
-            .and_then(|s| s.get_object(path))
-            .map(|o| o.value())
+            .and_then(|s| s.get_value(path))
     }
 }
 

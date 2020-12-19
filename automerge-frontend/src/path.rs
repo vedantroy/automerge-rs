@@ -4,7 +4,7 @@ use automerge_protocol as amp;
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum PathElement {
     Key(String),
-    Index(usize),
+    Index(u32),
 }
 
 impl PathElement {
@@ -24,7 +24,7 @@ impl Path {
         Path(Vec::new())
     }
 
-    pub fn index(mut self, index: usize) -> Self {
+    pub fn index(mut self, index: u32) -> Self {
         self.0.push(PathElement::Index(index));
         self
     }

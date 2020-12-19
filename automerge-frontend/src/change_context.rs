@@ -21,16 +21,12 @@ use std::{cell::RefCell, collections::HashMap, rc::Rc};
 /// actually mutating the original object set (which you will note is captured
 /// by mutable reference) when `commit` is called.
 pub(crate) struct ChangeContext<'a> {
-    original_objects: &'a mut HashMap<ObjectID, Rc<Object>>,
     root_state: StateTree,
-    updated: RefCell<HashMap<ObjectID, Rc<RefCell<Object>>>>,
 }
 
 impl<'a> ChangeContext<'a> {
-    pub(crate) fn new(original_objects: &'a mut HashMap<ObjectID, Rc<Object>>, original_root_state: StateTree) -> ChangeContext {
+    pub(crate) fn new(original_root_state: StateTree) -> ChangeContext {
         ChangeContext {
-            original_objects,
-            updated: RefCell::new(HashMap::new()),
             root_state: original_root_state,
         }
     }

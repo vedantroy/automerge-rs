@@ -96,4 +96,6 @@ pub enum InvalidChangeRequest {
     InsertForNonSequenceObject { path: Path },
     #[error("attempted to insert past the end of a sequence, path was {path:?}, max length of sequence is {sequence_length}")]
     InsertPastEndOfSequence { path: Path, sequence_length: u64 },
+    #[error("attempted to insert something into a text object which is not a character, object: {object:?}")]
+    InsertNonTextInTextObject { path: Path, object: Value },
 }

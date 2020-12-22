@@ -5,6 +5,7 @@ use crate::{Path, PathElement};
 /// value. We need to tag every value in the state with the OpID that created it.
 /// and maintain paralell trees of conflicting values.
 use automerge_protocol as amp;
+use std::convert::TryInto;
 
 #[derive(Debug, Clone)]
 pub(crate) struct StateTree {
@@ -20,43 +21,39 @@ trait Register {
     fn default_value(&self) -> Value;
 }
 
-pub enum PathTarget {
+pub enum MutationTarget {
     Map(MapTarget),
-    Table {
-        replace: Box<dyn FnOnce(&Value) -> StateTree>,
-        set_key: Box<dyn FnOnce(&str, &Value) -> StateTree>,
-        delete: Box<dyn FnOnce() -> StateTree>,
-    },
-    List {
-        replace: Box<dyn FnOnce(&Value) -> StateTree>,
-        insert: Box<dyn FnOnce(u32, &Value) -> StateTree>,
-        delete: Box<dyn FnOnce() -> StateTree>,
-    },
-    Text {
-        replace: Box<dyn FnOnce(&Value) -> StateTree>,
-        insert: Box<dyn FnOnce(u32, char) -> StateTree>,
-        delete: Box<dyn FnOnce() -> StateTree>,
-    },
-    Character {
-        replace: Box<dyn FnOnce(char) -> StateTree>,
-        delete: Box<dyn FnOnce() -> StateTree>,
-    },
-    Counter {
-        increment: Box<dyn FnOnce(u32) -> StateTree>,
-        delete: Box<dyn FnOnce() -> StateTree>,
-    },
-    Primitive {
-        replace: Box<dyn FnOnce(&Value) -> StateTree>,
-        delete: Box<dyn FnOnce() -> StateTree>,
-    },
+    Table(TableTarget),
+    List(ListTarget),
+    Text(TextTarget),
+    Character(CharTarget),
+    Counter(CounterTarget),
+    Primitive(PrimitiveTarget),
+}
+
+pub struct CounterTarget {
+    current_value: i64,
+    multivalue: MultiValue,
+    update: Box<dyn Fn(DiffApplicationResult<MultiValue>) -> StateTree>,
+    delete: Box<dyn Fn() -> StateTree>,
+}
+
+impl CounterTarget {
+    pub fn increment(&self, by: i64) -> StateTree {
+        let diffapp = DiffApplicationResult::pure(self.multivalue.update_default(StateTreeValue::Leaf(amp::ScalarValue::Counter(self.current_value + by))));
+        (self.update)(diffapp)
+    }
+
+    pub fn delete(&self) -> StateTree {
+        (self.delete)()
+    }
 }
 
 pub struct MapTarget {
-    root: StateTree,
     value: StateTreeMap,
     multivalue: MultiValue,
-    update: Box<dyn FnOnce(DiffApplicationResult<MultiValue>) -> StateTree>,
-    delete: Box<dyn FnOnce() -> StateTree>,
+    update: Box<dyn Fn(DiffApplicationResult<MultiValue>) -> StateTree>,
+    delete: Box<dyn Fn() -> StateTree>,
 }
 
 impl MapTarget {
@@ -68,8 +65,12 @@ impl MapTarget {
         let diffapp = MultiValue::new_from_value(value).and_then(|v| {
             let new_value = self.value.update(key.to_string(), v);
             let new_composite = StateTreeComposite::Map(new_value);
-            let new_mv = self.multivalue.update_default(StateTreeValue::Internal(new_composite));
-            DiffApplicationResult::pure(new_mv).with_updates(Some(im::HashMap::new().update(self.value.object_id, new_composite)))
+            let new_mv = self
+                .multivalue
+                .update_default(StateTreeValue::Internal(new_composite));
+            DiffApplicationResult::pure(new_mv).with_updates(Some(
+                im::HashMap::new().update(self.value.object_id, new_composite),
+            ))
         });
         (self.update)(diffapp)
     }
@@ -79,30 +80,197 @@ impl MapTarget {
     }
 }
 
-impl PathTarget {
+pub struct TableTarget {
+    value: StateTreeTable,
+    multivalue: MultiValue,
+    update: Box<dyn Fn(DiffApplicationResult<MultiValue>) -> StateTree>,
+    delete: Box<dyn Fn() -> StateTree>,
+}
+
+impl TableTarget {
+    pub fn replace(&self, value: &Value) -> StateTree {
+        (self.update)(MultiValue::new_from_value(value))
+    }
+
+    pub fn set_key(&self, key: &str, value: &Value) -> StateTree {
+        let diffapp = MultiValue::new_from_value(value).and_then(|v| {
+            let new_value = self.value.update(key.to_string(), v);
+            let new_composite = StateTreeComposite::Table(new_value);
+            let new_mv = self
+                .multivalue
+                .update_default(StateTreeValue::Internal(new_composite));
+            DiffApplicationResult::pure(new_mv).with_updates(Some(
+                im::HashMap::new().update(self.value.object_id, new_composite),
+            ))
+        });
+        (self.update)(diffapp)
+    }
+
+    pub fn delete(&self) -> StateTree {
+        (self.delete)()
+    }
+}
+
+pub struct TextTarget {
+    value: StateTreeText,
+    multivalue: MultiValue,
+    update: Box<dyn Fn(DiffApplicationResult<MultiValue>) -> StateTree>,
+    delete: Box<dyn Fn() -> StateTree>,
+}
+
+impl TextTarget {
+    pub fn insert(&self, index: u32, c: char) -> StateTree {
+        let new_chars = self.value.chars.clone();
+        new_chars.insert(index.try_into().unwrap(), MultiChar::new_from_char(c));
+        let updated =
+            StateTreeComposite::Text(StateTreeText {
+                object_id: self.value.object_id,
+                chars: new_chars,
+            });
+        let mv = self.multivalue.update_default(
+            StateTreeValue::Internal(updated),
+        );
+        let diffapp = DiffApplicationResult::pure(mv)
+            .with_updates(Some(
+                im::HashMap::new()
+                    .update(self.value.object_id, updated.clone()),
+            ));
+        (self.update)(diffapp)
+    }
+
+    pub fn set(&self, index: u32, c: char) -> StateTree {
+        let new_chars = self.value.chars.clone();
+        new_chars.set(index.try_into().unwrap(), MultiChar::new_from_char(c));
+        let updated =
+            StateTreeComposite::Text(StateTreeText {
+                object_id: self.value.object_id,
+                chars: new_chars,
+            });
+        let mv = self.multivalue.update_default(
+            StateTreeValue::Internal(updated),
+        );
+        let diffapp = DiffApplicationResult::pure(mv)
+            .with_updates(Some(
+                im::HashMap::new()
+                    .update(self.value.object_id, updated.clone()),
+            ));
+        (self.update)(diffapp)
+    }
+
+    pub fn remove(&self, index: u32) -> StateTree {
+        let new_chars = self.value.chars.clone();
+        new_chars.remove(index.try_into().unwrap());
+        let updated =
+            StateTreeComposite::Text(StateTreeText {
+                object_id: self.value.object_id,
+                chars: new_chars,
+            });
+        let mv = self.multivalue.update_default(
+            StateTreeValue::Internal(updated),
+        );
+        let diffapp = DiffApplicationResult::pure(mv)
+            .with_updates(Some(
+                im::HashMap::new()
+                    .update(self.value.object_id, updated.clone()),
+            ));
+        (self.update)(diffapp)
+    }
+
+    pub fn delete(&self) -> StateTree {
+        (self.delete)()
+    }
+}
+
+pub struct ListTarget {
+    value: StateTreeList,
+    multivalue: MultiValue,
+    update: Box<dyn Fn(DiffApplicationResult<MultiValue>) -> StateTree>,
+    delete: Box<dyn Fn() -> StateTree>,
+}
+
+impl ListTarget {
+    pub fn set(&self, index: u32, v: &Value) -> StateTree {
+        let diffapp = MultiValue::new_from_value(v).and_then(|v| {
+            let new_value = StateTreeComposite::List(self.value.set(index.try_into().unwrap(), v));
+            let mv = self.multivalue.update_default(StateTreeValue::Internal(new_value));
+            DiffApplicationResult::pure(mv).with_updates(Some(im::HashMap::new().update(self.value.object_id, new_value)))
+        });
+        (self.update)(diffapp)
+    }
+
+    pub fn insert(&self, index: u32, v: &Value) -> StateTree {
+        let diffapp = MultiValue::new_from_value(v).and_then(|v| {
+            let new_value = StateTreeComposite::List(self.value.insert(index.try_into().unwrap(), v));
+            let mv = self.multivalue.update_default(StateTreeValue::Internal(new_value));
+            DiffApplicationResult::pure(mv).with_updates(Some(im::HashMap::new().update(self.value.object_id, new_value)))
+        });
+        (self.update)(diffapp)
+    }
+
+    pub fn remove(&self, index: u32) -> StateTree {
+        let new_value = StateTreeComposite::List(self.value.remove(index.try_into().unwrap()));
+        let mv = self.multivalue.update_default(StateTreeValue::Internal(new_value));
+        let diffapp = DiffApplicationResult::pure(mv).with_updates(Some(im::HashMap::new().update(self.value.object_id, new_value)));
+        (self.update)(diffapp)
+    }
+
+    pub fn delete(&self) -> StateTree {
+        (self.delete)()
+    }
+}
+
+
+pub struct CharTarget {
+    update: Box<dyn Fn(DiffApplicationResult<MultiChar>) -> StateTree>,
+    delete: Box<dyn Fn() -> StateTree>,
+}
+
+impl CharTarget {
+    pub fn set(&self, c: char) -> StateTree {
+        (self.update)(DiffApplicationResult::pure(MultiChar::new_from_char(c)))
+    }
+
+    pub fn delete(&self) -> StateTree {
+        (self.delete)()
+    }
+}
+
+pub struct PrimitiveTarget {
+    update: Box<dyn Fn(DiffApplicationResult<MultiValue>) -> StateTree>,
+    delete: Box<dyn Fn() -> StateTree>,
+}
+
+impl PrimitiveTarget {
+    pub fn set(&self, v: &Value) -> StateTree {
+        let diffapp = MultiValue::new_from_value(v);
+        (self.update)(diffapp)
+    }
+
+    pub fn delete(&self) -> StateTree {
+        (self.delete)()
+    }
+}
+
+impl MutationTarget {
     pub fn delete(&self) -> StateTree {
         match self {
-            Self::Map { delete, .. }
-            | Self::Table { delete, .. }
-            | Self::List { delete, .. }
-            | Self::Text { delete, .. }
-            | Self::Character { delete, .. }
-            | Self::Counter { delete, .. }
-            | Self::Primitive { delete, .. } => delete(),
+            Self::Map(maptarget) => maptarget.delete(),
+            Self::Text(text) => text.delete(),
+            Self::Primitive(prim) => prim.delete(),
+            Self::Character(chartarget) => chartarget.delete(),
+            Self::Table(table) => table.delete(),
+            Self::List(list) => list.delete(),
+            Self::Counter(counter) => counter.delete()
         }
     }
 }
 
 pub struct PathResolution<'a> {
     path: &'a Path,
-    value: StateTreeValue,
     pub containing_object_id: amp::ObjectID,
     pub object_id: Option<amp::ObjectID>,
     register: Box<dyn Register>,
-    pub update: PathTarget,
-    delete: Box<dyn FnOnce() -> StateTree>,
-    replace: Box<dyn FnOnce(MultiValue) -> StateTree>,
-    root: StateTree,
+    mutation_target: MutationTarget,
 }
 
 impl<'a> PathResolution<'a> {
@@ -114,13 +282,8 @@ impl<'a> PathResolution<'a> {
         self.register.values()
     }
 
-    pub fn target(&self) -> PathTarget {
-        match self.value {
-            StateTreeValue::Leaf(v) => PathTarget::Primitive {
-                delete: self.delete,
-                replace: Box::new(|val| self.root.with_new_value(val, self.replace).0),
-            },
-        }
+    pub fn mutations(&self) -> &MutationTarget {
+        &self.mutation_target
     }
 }
 
@@ -186,11 +349,12 @@ impl StateTree {
             let root_for_delete = self.clone();
             let root_for_update = self.clone();
             if let Some(o) = first_obj {
-                let mut delete: Box<dyn FnOnce() -> StateTree> = Box::new(|| {
+                let mut delete: Box<dyn Fn() -> StateTree> = Box::new(|| {
                     root_for_delete.root_map.remove(&k);
                     root_for_delete
                 });
-                let mut update: Box<dyn FnOnce(DiffApplicationResult<MultiValue>) -> StateTree> =
+                
+                let mut update: Box<dyn Fn(DiffApplicationResult<MultiValue>) -> StateTree> =
                     Box::new(|diff_result| StateTree {
                         root_map: root_for_update
                             .root_map
@@ -213,7 +377,7 @@ impl StateTree {
                                 )) => {
                                     if let Some(target) = props.get(&k) {
                                         let new_update: Box<
-                                            dyn FnOnce(
+                                            dyn Fn(
                                                 DiffApplicationResult<MultiValue>,
                                             )
                                                 -> StateTree,
@@ -260,18 +424,29 @@ impl StateTree {
                                     },
                                 )) => {
                                     if let Some(target) = props.get(&k) {
-                                        let new_update: Box<dyn FnOnce(MultiValue) -> StateTree> =
-                                            Box::new(|c| {
-                                                let new_val = current_obj.update_default(
-                                                    StateTreeValue::Internal(
-                                                        StateTreeComposite::Table(StateTreeTable {
-                                                            object_id: oid,
-                                                            props: props.update(k, c),
-                                                        }),
+                                        let new_update: Box<
+                                            dyn Fn(
+                                                DiffApplicationResult<MultiValue>,
+                                            )
+                                                -> StateTree,
+                                        > = Box::new(|c| {
+                                            let diffapp = c.and_then(|v| {
+                                                let updated =
+                                                    StateTreeComposite::Table(StateTreeTable {
+                                                        object_id: oid,
+                                                        props: props.update(k, v),
+                                                    });
+                                                DiffApplicationResult::pure(
+                                                    current_obj.update_default(
+                                                        StateTreeValue::Internal(updated),
                                                     ),
-                                                );
-                                                update(new_val)
+                                                )
+                                                .with_updates(Some(
+                                                    im::HashMap::new().update(oid, updated.clone()),
+                                                ))
                                             });
+                                            update(diffapp)
+                                        });
                                         delete = Box::new(|| {
                                             let new_val = current_obj.update_default(
                                                 StateTreeValue::Internal(
@@ -281,7 +456,7 @@ impl StateTree {
                                                     }),
                                                 ),
                                             );
-                                            update(new_val)
+                                            update(DiffApplicationResult::pure(new_val))
                                         });
                                         update = new_update;
                                         parent_object_id = oid.clone();
@@ -304,18 +479,30 @@ impl StateTree {
                                     if let Some(target) = elems.get(i as usize) {
                                         parent_object_id = oid.clone();
                                         current_obj = target.clone();
-                                        let new_update: Box<dyn FnOnce(MultiValue) -> StateTree> =
-                                            Box::new(|c| {
-                                                let new_val = current_obj.update_default(
-                                                    StateTreeValue::Internal(
-                                                        StateTreeComposite::List(StateTreeList {
-                                                            object_id: oid,
-                                                            elements: elems.update(i as usize, c),
-                                                        }),
+                                        let new_update: Box<
+                                            dyn Fn(
+                                                DiffApplicationResult<MultiValue>,
+                                            )
+                                                -> StateTree,
+                                        > = Box::new(|c| {
+                                            let diffapp = c.and_then(|v| {
+                                                let updated =
+                                                    StateTreeComposite::List(StateTreeList {
+                                                        object_id: oid,
+                                                        elements: elems
+                                                            .update(i.try_into().unwrap(), v),
+                                                    });
+                                                DiffApplicationResult::pure(
+                                                    current_obj.update_default(
+                                                        StateTreeValue::Internal(updated),
                                                     ),
-                                                );
-                                                update(new_val)
+                                                )
+                                                .with_updates(Some(
+                                                    im::HashMap::new().update(oid, updated.clone()),
+                                                ))
                                             });
+                                            update(diffapp)
+                                        });
                                         update = new_update;
                                         delete = Box::new(|| {
                                             let new_elems = elems.clone();
@@ -328,7 +515,7 @@ impl StateTree {
                                                     },
                                                 )),
                                             );
-                                            update(new_val)
+                                            update(DiffApplicationResult::pure(new_val))
                                         })
                                     } else {
                                         return None;
@@ -343,43 +530,36 @@ impl StateTree {
                                     if let Some(target) = chars.get(i as usize) {
                                         parent_object_id = oid.clone();
                                         if stack.is_empty() {
-                                            let char_update: Box<dyn FnOnce(char) -> StateTree> =
-                                                Box::new(|c| {
-                                                    let conflicts = MultiChar::new_from_char(c);
-                                                    let new_val = current_obj.update_default(
-                                                        StateTreeValue::Internal(
-                                                            StateTreeComposite::Text(
-                                                                StateTreeText {
-                                                                    object_id: oid,
-                                                                    chars: chars.update(
-                                                                        i as usize, conflicts,
-                                                                    ),
-                                                                },
-                                                            ),
-                                                        ),
-                                                    );
-                                                    update(new_val)
+                                            let new_update: Box<dyn Fn(DiffApplicationResult<MultiChar>) -> StateTree> = Box::new(|d| {
+                                                let diffapp = d.and_then(|c| {
+                                                    let new_chars = chars.update(i.try_into().unwrap(), c);
+                                                    let new_value = StateTreeComposite::Text(StateTreeText{
+                                                        object_id: oid,
+                                                        chars: new_chars,
+                                                    });
+                                                    let mv = current_obj.update_default(StateTreeValue::Internal(new_value));
+                                                    DiffApplicationResult::pure(mv).with_updates(Some(im::HashMap::new().update(oid, new_value.clone())))
                                                 });
-                                            delete = Box::new(|| {
+                                                update(diffapp)
+                                            });
+                                            let new_delete: Box<dyn Fn() -> StateTree> = Box::new(|| {
                                                 let new_chars = chars.clone();
-                                                new_chars.remove(i as usize);
-                                                let new_val = current_obj.update_default(
-                                                    StateTreeValue::Internal(
-                                                        StateTreeComposite::Text(StateTreeText {
-                                                            object_id: oid,
-                                                            chars: new_chars,
-                                                        }),
-                                                    ),
-                                                );
-                                                update(new_val)
+                                                new_chars.remove(i.try_into().unwrap());
+                                                let new_val = StateTreeValue::Internal(StateTreeComposite::Text(StateTreeText{
+                                                    object_id: oid,
+                                                    chars: new_chars,
+                                                }));
+                                                update(DiffApplicationResult::pure(current_obj.update_default(new_val)))
                                             });
                                             return Some(PathResolution {
                                                 path: &path,
                                                 containing_object_id: parent_object_id,
                                                 object_id: None,
                                                 register: Box::new(target.clone()),
-                                                update: PathTarget::Char(char_update),
-                                                delete,
+                                                mutation_target: MutationTarget::Character(CharTarget {
+                                                    update: new_update,
+                                                    delete: new_delete,
+                                                }),
                                             });
                                         } else {
                                             return None;
@@ -392,19 +572,52 @@ impl StateTree {
                             }
                         }
                     };
-                }
+                };
+                let target = match current_obj.default_statetree_value().unwrap() {
+                    StateTreeValue::Leaf(v) => match v {
+                        amp::ScalarValue::Counter(v) => MutationTarget::Counter(CounterTarget{
+                            current_value: v,
+                            multivalue: current_obj.clone(),
+                            update,
+                            delete,
+                        }),
+                        _ => MutationTarget::Primitive(PrimitiveTarget{
+                            update,
+                            delete,
+                        }),
+                    },
+                    StateTreeValue::Internal(composite) => match composite {
+                        StateTreeComposite::Map(m) => MutationTarget::Map(MapTarget{
+                            value: m,
+                            multivalue: current_obj.clone(),
+                            update,
+                            delete,
+                        }),
+                        StateTreeComposite::Table(t) => MutationTarget::Table(TableTarget{
+                            value: t,
+                            multivalue: current_obj.clone(),
+                            update,
+                            delete,
+                        }),
+                        StateTreeComposite::List(l) => MutationTarget::List(ListTarget{
+                            value: l,
+                            multivalue: current_obj.clone(),
+                            update,
+                            delete,
+                        }),
+                        StateTreeComposite::Text(_) => {
+                            panic!("Unexpectedly reached text object")
+                        }
+                    }
+                };
                 Some(PathResolution {
                     path: &path,
                     containing_object_id: parent_object_id,
                     object_id: current_obj
                         .default_statetree_value()
                         .and_then(|o| o.object_id()),
-                    register: Box::new(current_obj),
-                    update: PathTarget::AnyVal(Box::new(|v| {
-                        let (new_root, _) = root_for_update.with_new_value(v, update);
-                        new_root
-                    })),
-                    delete,
+                    register: Box::new(current_obj.clone()),
+                    mutation_target: target,
                 })
             } else {
                 None
@@ -417,7 +630,7 @@ impl StateTree {
     pub fn value(&self) -> Value {
         StateTreeValue::Internal(StateTreeComposite::Map(StateTreeMap {
             object_id: amp::ObjectID::Root,
-            props: self.root_map,
+            props: self.root_map.clone(),
         }))
         .value()
     }
@@ -429,15 +642,15 @@ impl StateTree {
     pub fn with_new_value<'a, 'b>(
         &'a self,
         v: &'b Value,
-        update: Box<dyn FnOnce(MultiValue) -> StateTree>,
+        update: Box<dyn Fn(MultiValue) -> StateTree>,
     ) -> (StateTree, MultiValue) {
         let result = MultiValue::new_from_value(v);
         let new_tree = StateTree {
             root_map: update(result.value().clone()).root_map,
             object_index: result
                 .index_updates()
-                .map(|u| u.union(self.object_index))
-                .unwrap_or(self.object_index),
+                .map(|u| u.union(self.object_index.clone()))
+                .unwrap_or_else(|| self.object_index.clone()),
         };
         (new_tree, result.value().clone())
     }
@@ -449,7 +662,7 @@ impl StateTree {
 #[derive(Clone)]
 pub struct DiffApplicationResult<T>((T, Option<im::HashMap<amp::ObjectID, StateTreeComposite>>));
 
-impl<T> DiffApplicationResult<T> {
+impl<T> DiffApplicationResult<T> where T: Clone {
     fn pure(value: T) -> DiffApplicationResult<T> {
         DiffApplicationResult((value, None))
     }
@@ -464,17 +677,19 @@ impl<T> DiffApplicationResult<T> {
 
     fn map<F, G>(self, f: F) -> DiffApplicationResult<G>
     where
-        F: FnOnce(T) -> G,
+        F: Fn(T) -> G,
+        G: Clone
     {
         DiffApplicationResult((f(self.0 .0), self.0 .1))
     }
 
     fn and_then<F, G>(self, f: F) -> DiffApplicationResult<G>
     where
-        F: FnOnce(T) -> DiffApplicationResult<G>,
+        F: Fn(T) -> DiffApplicationResult<G>,
+        G: Clone
     {
-        let diff = f(self.0 .0);
-        self.with_updates(diff.0 .1).map(|_| diff.0 .0)
+        let diff = f(self.0 .0.clone());
+        self.with_updates(diff.0 .1.clone()).map(|_| diff.0 .0.clone())
     }
 
     fn with_updates(
@@ -501,8 +716,8 @@ impl<T> DiffApplicationResult<T> {
     where
         F: Fn(T, U) -> V,
     {
-        let new_contained = f(self.0 .0, other.0 .0);
-        let new_index_updates = match (self.0 .1, other.0 .1) {
+        let new_contained = f(self.0 .0.clone(), other.0 .0);
+        let new_index_updates = match (self.0 .1.clone(), other.0 .1) {
             (Some(u1), Some(u2)) => Some(u2.union(u1)),
             (None, Some(u2)) => Some(u2),
             (Some(u1), None) => Some(u1),
@@ -532,7 +747,7 @@ impl MultiValue {
     fn new_from_value(value: &Value) -> DiffApplicationResult<MultiValue> {
         match value {
             Value::Map(props, amp::MapType::Map) => {
-                let mut map = im::HashMap::new();
+                let map = im::HashMap::new();
                 let diffapp = DiffApplicationResult((map, None));
                 props
                     .iter()
@@ -552,7 +767,7 @@ impl MultiValue {
                     })
             }
             Value::Map(props, amp::MapType::Table) => {
-                let mut map = im::HashMap::new();
+                let map = im::HashMap::new();
                 let diffapp = DiffApplicationResult((map, None));
                 props
                     .iter()
@@ -572,12 +787,12 @@ impl MultiValue {
                     })
             }
             Value::Sequence(vals) => {
-                let mut elems = im::Vector::new();
+                let elems = im::Vector::new();
                 let diffapp = DiffApplicationResult((elems, None));
                 vals.iter()
                     .fold(diffapp, |diffapp_so_far, elem| {
                         let elem_diffapp = MultiValue::new_from_value(elem);
-                        diffapp_so_far.union_with(elem_diffapp, |elems_so_far, elem| {
+                        diffapp_so_far.union_with(elem_diffapp, |mut elems_so_far, elem| {
                             elems_so_far.push_back(elem);
                             elems_so_far
                         })
@@ -602,7 +817,7 @@ impl MultiValue {
                         .collect(),
                 });
                 let mv = MultiValue(
-                    im::HashMap::new().update(random_op_id(), StateTreeValue::Internal(val)),
+                    im::HashMap::new().update(random_op_id(), StateTreeValue::Internal(val.clone())),
                 );
                 DiffApplicationResult((mv, Some(im::HashMap::new().update(obj_id, val))))
             }
@@ -941,6 +1156,16 @@ struct StateTreeTable {
     object_id: amp::ObjectID,
     props: im::HashMap<String, MultiValue>,
 }
+
+impl StateTreeTable {
+    fn update(&self, key: String, value: MultiValue) -> StateTreeTable {
+        StateTreeTable {
+            object_id: self.object_id.clone(),
+            props: self.props.update(key, value),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 struct StateTreeText {
     object_id: amp::ObjectID,
@@ -950,6 +1175,33 @@ struct StateTreeText {
 struct StateTreeList {
     object_id: amp::ObjectID,
     elements: im::Vector<MultiValue>,
+}
+
+impl StateTreeList {
+    fn remove(&self, index: usize) -> StateTreeList {
+        let mut new_elems = self.elements.clone();
+        new_elems.remove(index);
+        StateTreeList{
+            object_id: self.object_id.clone(),
+            elements: new_elems,
+        }
+    }
+
+    fn set(&self, index: usize, value: MultiValue) -> StateTreeList {
+        StateTreeList{
+            object_id: self.object_id.clone(),
+            elements: self.elements.update(index, value),
+        }
+    }
+
+    fn insert(&self, index: usize, value: MultiValue) -> StateTreeList {
+        let mut new_elems = self.elements.clone();
+        new_elems.insert(index, value);
+        StateTreeList {
+            object_id: self.object_id.clone(),
+            elements: new_elems,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

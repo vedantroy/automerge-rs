@@ -6,7 +6,6 @@ mod object;
 mod value;
 mod state_tree;
 mod path;
-mod mutation_target;
 
 pub use error::{
     AutomergeFrontendError, InvalidChangeRequest, InvalidInitialStateError, InvalidPatch,
@@ -103,7 +102,7 @@ impl FrontendState {
                 };
                 Ok(match new_in_flight_requests[..] {
                     [] => (
-                        Some(reconciled_root_state.value()),
+                        Some(new_reconciled_root_state.value()),
                         FrontendState::Reconciled {
                             root_state: new_reconciled_root_state,
                         },
@@ -137,7 +136,7 @@ impl FrontendState {
         self.resolve_path(path).map(|r| r.default_value())
     }
 
-    fn resolve_path(&self, path: &Path) -> Option<PathResolution> {
+    fn resolve_path<'a, 'b>(&'a self, path: &'b Path) -> Option<PathResolution<'b>> {
         let root = match self {
             FrontendState::WaitingForInFlightRequests{
                 optimistically_updated_root_state,
@@ -169,7 +168,7 @@ impl FrontendState {
             } => {
                 let mut mutation_tracker = mutation::MutationTracker::new(optimistically_updated_root_state.clone());
                 change_closure(&mut mutation_tracker)?;
-                let new_root_state = mutation_tracker.state;
+                let new_root_state = mutation_tracker.state.clone();
                 let new_value = new_root_state.value();
                 in_flight_requests.push(seq);
                 Ok((
@@ -185,7 +184,7 @@ impl FrontendState {
             FrontendState::Reconciled { root_state } => {
                 let mut mutation_tracker = mutation::MutationTracker::new(root_state.clone());
                 change_closure(&mut mutation_tracker)?;
-                let new_root_state = mutation_tracker.state;
+                let new_root_state = mutation_tracker.state.clone();
                 let new_value = new_root_state.value();
                 let in_flight_requests = vec![seq];
                 Ok((
@@ -341,9 +340,6 @@ impl Frontend {
         self.state = Some(new_state);
         if let Some(new_cached_value) = new_cached_value {
             self.cached_value = new_cached_value;
-        };
-        if let Some(v) = new_cached_value {
-            self.cached_value = v;
         };
         self.version = std::cmp::max(self.version, patch.version);
         if let Some(seq) = patch.clock.get(&self.actor_id) {

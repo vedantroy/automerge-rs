@@ -16,6 +16,15 @@ impl PathElement {
     }
 }
 
+impl From<&PathElement> for amp::RequestKey {
+    fn from(element: &PathElement) -> Self {
+        match element {
+            PathElement::Key(s) => amp::RequestKey::Str(s.into()),
+            PathElement::Index(i) => amp::RequestKey::Num(*i as u64),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Path(Vec<PathElement>);
 
@@ -51,6 +60,10 @@ impl Path {
 
     pub(crate) fn elements(self) -> Vec<PathElement> {
         self.0
+    }
+
+    pub(crate) fn is_root(&self) -> bool {
+        self.0.is_empty()
     }
 }
 

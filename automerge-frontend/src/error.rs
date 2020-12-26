@@ -98,4 +98,6 @@ pub enum InvalidChangeRequest {
     InsertPastEndOfSequence { path: Path, sequence_length: u64 },
     #[error("attempted to insert something into a text object which is not a character, object: {object:?}")]
     InsertNonTextInTextObject { path: Path, object: Value },
+    #[error("attmpted to delete root object")]
+    CannotDeleteRootObject
 }

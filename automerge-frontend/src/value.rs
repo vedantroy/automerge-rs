@@ -1,6 +1,5 @@
 use crate::PathElement;
 use automerge_protocol as amp;
-use maplit::hashmap;
 use serde::Serialize;
 use std::{borrow::Borrow, collections::HashMap};
 use std::convert::TryInto;
@@ -134,14 +133,13 @@ impl Value {
 ///                   within the parent object.
 ///
 ///
-/// Returns a tuple of the op requests which will create this value, and a diff
-/// which corresponds to those ops.
+/// Returns a vector of the op requests which will create this value
 pub(crate) fn value_to_op_requests(
     parent_object: amp::ObjectID,
-    key: PathElement,
+    key: &PathElement,
     v: &Value,
     insert: bool,
-) -> (Vec<amp::Op>, amp::Diff) {
+) -> Vec<amp::Op> {
     match v {
         Value::Sequence(vs) => {
             let list_id = new_object_id();
@@ -154,35 +152,17 @@ pub(crate) fn value_to_op_requests(
                 datatype: None,
                 insert,
             };
-            let child_requests_and_diffs: Vec<(Vec<amp::Op>, amp::Diff)> = vs
+            let child_requests_nested: Vec<Vec<amp::Op>> = vs
                 .iter()
                 .enumerate()
                 .map(|(index, v)| {
-                    value_to_op_requests(list_id.clone(), PathElement::Index(index.try_into().unwrap()), v, true)
+                    value_to_op_requests(list_id.clone(), &PathElement::Index(index.try_into().unwrap()), v, true)
                 })
                 .collect();
-            let child_requests: Vec<amp::Op> = child_requests_and_diffs
-                .iter()
-                .cloned()
-                .flat_map(|(o, _)| o)
-                .collect();
-            let child_diff = amp::SeqDiff {
-                edits: vs
-                    .iter()
-                    .enumerate()
-                    .map(|(index, _)| amp::DiffEdit::Insert { index })
-                    .collect(),
-                object_id: list_id,
-                obj_type: amp::SequenceType::List,
-                props: child_requests_and_diffs
-                    .into_iter()
-                    .enumerate()
-                    .map(|(index, (_, diff_link))| (index, hashmap! {random_op_id() => diff_link}))
-                    .collect(),
-            };
+            let child_requests: Vec<amp::Op> = child_requests_nested.into_iter().flatten().collect();
             let mut result = vec![make_op];
             result.extend(child_requests);
-            (result, amp::Diff::Seq(child_diff))
+            result
         }
         Value::Text(chars) => {
             let text_id = new_object_id();
@@ -210,13 +190,7 @@ pub(crate) fn value_to_op_requests(
                 .collect();
             let mut ops = vec![make_op];
             ops.extend(insert_ops.into_iter());
-            let diff = amp::SeqDiff {
-                edits: chars.iter().enumerate().map(|(index, _)| amp::DiffEdit::Insert { index }).collect(),
-                object_id: text_id,
-                obj_type: amp::SequenceType::Text,
-                props: chars.iter().enumerate().map(|(i,c)| (i, hashmap!{random_op_id() => amp::Diff::Value(amp::ScalarValue::Str(c.to_string()))})).collect()
-            };
-            (ops, amp::Diff::Seq(diff))
+            ops
         }
         Value::Map(kvs, map_type) => {
             let make_action = match map_type {
@@ -233,31 +207,23 @@ pub(crate) fn value_to_op_requests(
                 datatype: None,
                 insert,
             };
-            let child_requests_and_diffs: HashMap<String, (Vec<amp::Op>, amp::Diff)> = kvs
+            let child_requests_nested: HashMap<String, Vec<amp::Op>> = kvs
                 .iter()
                 .map(|(k, v)| {
                     (
                         k.clone(),
-                        value_to_op_requests(map_id.clone(), PathElement::Key(k.clone()), v, false),
+                        value_to_op_requests(map_id.clone(), &PathElement::Key(k.clone()), v, false),
                     )
                 })
                 .collect();
             let mut result = vec![make_op];
-            let child_requests: Vec<amp::Op> = child_requests_and_diffs
+            let child_requests: Vec<amp::Op> = child_requests_nested
                 .iter()
-                .flat_map(|(_, (o, _))| o)
+                .flat_map(|(_, o)| o)
                 .cloned()
                 .collect();
-            let child_diff = amp::MapDiff {
-                object_id: map_id,
-                obj_type: *map_type,
-                props: child_requests_and_diffs
-                    .into_iter()
-                    .map(|(k, (_, diff_link))| (k, hashmap! {random_op_id() => diff_link}))
-                    .collect(),
-            };
             result.extend(child_requests);
-            (result, amp::Diff::Map(child_diff))
+            result
         }
         Value::Primitive(prim_value) => {
             let ops = vec![amp::Op {
@@ -269,8 +235,7 @@ pub(crate) fn value_to_op_requests(
                 datatype: Some(value_to_datatype(prim_value)),
                 insert,
             }];
-            let diff = amp::Diff::Value(prim_value.clone());
-            (ops, diff)
+            ops
         }
     }
 }

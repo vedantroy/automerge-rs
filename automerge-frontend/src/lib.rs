@@ -129,6 +129,14 @@ impl FrontendState {
     }
 
     fn get_object_id(&self, path: &Path) -> Option<ObjectID> {
+        match self {
+            FrontendState::WaitingForInFlightRequests{optimistically_updated_root_state, ..} => {
+                println!("In flight: {:?}", optimistically_updated_root_state);
+            },
+            FrontendState::Reconciled{root_state,..} => {
+                println!("Reconciled: {:?}", root_state);
+            }
+        };
         self.resolve_path(path).and_then(|r| r.object_id)
     }
 
@@ -258,11 +266,10 @@ impl Frontend {
                     .flat_map(|(k, v)| {
                         value::value_to_op_requests(
                             ObjectID::Root,
-                            PathElement::Key(k.to_string()),
+                            &PathElement::Key(k.to_string()),
                             v,
                             false,
                         )
-                        .0
                     })
                     .collect();
                 let mut front = Frontend::new();

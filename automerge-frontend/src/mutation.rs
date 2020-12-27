@@ -1,5 +1,5 @@
-use crate::state_tree::{StateTree, MutationTarget, LocalStateChange};
 use crate::error::InvalidChangeRequest;
+use crate::state_tree::{LocalStateChange, MutationTarget, StateTree};
 use crate::value::Value;
 use crate::{Path, PathElement};
 use automerge_protocol as amp;
@@ -124,7 +124,9 @@ impl MutableDocument for MutationTracker {
                 //TODO double resolving is ugly here
                 if let Some(target) = self.state.resolve_path(&change.path) {
                     if let MutationTarget::Counter(_) = target.mutations() {
-                        return Err(InvalidChangeRequest::CannotOverwriteCounter{ path: change.path})
+                        return Err(InvalidChangeRequest::CannotOverwriteCounter {
+                            path: change.path,
+                        });
                     }
                 };
                 if let Some(name) = change.path.name() {
@@ -133,46 +135,50 @@ impl MutableDocument for MutationTracker {
                             (PathElement::Key(ref k), MutationTarget::Root(root_target)) => {
                                 self.apply_state_change(root_target.set_key(k, value));
                                 Ok(())
-                            },
+                            }
                             (PathElement::Key(ref k), MutationTarget::Map(ref maptarget)) => {
                                 self.apply_state_change(maptarget.set_key(k, value));
                                 Ok(())
-                            },
+                            }
                             (PathElement::Key(ref k), MutationTarget::Table(ref tabletarget)) => {
                                 self.apply_state_change(tabletarget.set_key(k, value));
                                 Ok(())
-                            },
+                            }
                             // In this case we are trying to modify a key in something which is not
                             // an object or a table, so the path does not exist
                             (PathElement::Key(_), _) => {
                                 Err(InvalidChangeRequest::NoSuchPathError { path: change.path })
-                            },
+                            }
                             (PathElement::Index(i), MutationTarget::List(ref list_target)) => {
                                 self.apply_state_change(list_target.set(*i, value));
                                 Ok(())
-                            },
+                            }
                             (PathElement::Index(i), MutationTarget::Text(ref text)) => {
                                 match value {
                                     Value::Primitive(amp::ScalarValue::Str(s)) => {
                                         if s.len() == 1 {
-                                            self.apply_state_change(text.set(*i, s.chars().next().unwrap()));
+                                            self.apply_state_change(
+                                                text.set(*i, s.chars().next().unwrap()),
+                                            );
                                             Ok(())
                                         } else {
-                                            Err(InvalidChangeRequest::InsertNonTextInTextObject{
+                                            Err(InvalidChangeRequest::InsertNonTextInTextObject {
                                                 path: change.path.clone(),
                                                 object: value.clone(),
                                             })
                                         }
-                                    },
-                                    _ => Err(InvalidChangeRequest::InsertNonTextInTextObject{
+                                    }
+                                    _ => Err(InvalidChangeRequest::InsertNonTextInTextObject {
                                         path: change.path.clone(),
                                         object: value.clone(),
-                                    })
+                                    }),
                                 }
-                            },
-                            (PathElement::Index(_), _) => Err(InvalidChangeRequest::InsertWithNonSequencePath{
-                                path: change.path.clone()
-                            })
+                            }
+                            (PathElement::Index(_), _) => {
+                                Err(InvalidChangeRequest::InsertWithNonSequencePath {
+                                    path: change.path.clone(),
+                                })
+                            }
                         }
                     } else {
                         Err(InvalidChangeRequest::NoSuchPathError { path: change.path })
@@ -185,43 +191,65 @@ impl MutableDocument for MutationTracker {
                 if let Some(name) = change.path.name() {
                     if let Some(pr) = self.state.resolve_path(&change.path.parent()) {
                         let state_change = match pr.mutations() {
-                            MutationTarget::Counter(_) => return Err(InvalidChangeRequest::NoSuchPathError{ path: change.path }),
-                            MutationTarget::List(l) => {
-                                match name {
-                                    PathElement::Index(i) => l.remove(*i),
-                                    _ => return Err(InvalidChangeRequest::NoSuchPathError{ path: change.path})
-                                }
-                            },
-                            MutationTarget::Text(t) => {
-                                match name {
-                                    PathElement::Index(i) => t.remove(*i),
-                                    _ => return Err(InvalidChangeRequest::NoSuchPathError{ path: change.path})
-                                }
-                            },
-                            MutationTarget::Primitive(_) => return Err(InvalidChangeRequest::NoSuchPathError{ path: change.path }),
-                            MutationTarget::Map(m) => {
-                                match name {
-                                    PathElement::Key(k) => m.delete_key(k),
-                                    _ => return Err(InvalidChangeRequest::NoSuchPathError{ path: change.path })
-                                }
-                            },
-                            MutationTarget::Table(t) => {
-                                match name {
-                                    PathElement::Key(k) => t.delete_key(k),
-                                    _ => return Err(InvalidChangeRequest::NoSuchPathError{ path: change.path })
-                                }
-                            },
-                            MutationTarget::Character(_) => return Err(InvalidChangeRequest::NoSuchPathError{ path: change.path }),
-                            MutationTarget::Root(r) => {
-                                match name {
-                                    PathElement::Key(k) => r.delete_key(k),
-                                    _ => return Err(InvalidChangeRequest::NoSuchPathError{ path: change.path })
-                                }
+                            MutationTarget::Counter(_) => {
+                                return Err(InvalidChangeRequest::NoSuchPathError {
+                                    path: change.path,
+                                })
                             }
+                            MutationTarget::List(l) => match name {
+                                PathElement::Index(i) => l.remove(*i),
+                                _ => {
+                                    return Err(InvalidChangeRequest::NoSuchPathError {
+                                        path: change.path,
+                                    })
+                                }
+                            },
+                            MutationTarget::Text(t) => match name {
+                                PathElement::Index(i) => t.remove(*i),
+                                _ => {
+                                    return Err(InvalidChangeRequest::NoSuchPathError {
+                                        path: change.path,
+                                    })
+                                }
+                            },
+                            MutationTarget::Primitive(_) => {
+                                return Err(InvalidChangeRequest::NoSuchPathError {
+                                    path: change.path,
+                                })
+                            }
+                            MutationTarget::Map(m) => match name {
+                                PathElement::Key(k) => m.delete_key(k),
+                                _ => {
+                                    return Err(InvalidChangeRequest::NoSuchPathError {
+                                        path: change.path,
+                                    })
+                                }
+                            },
+                            MutationTarget::Table(t) => match name {
+                                PathElement::Key(k) => t.delete_key(k),
+                                _ => {
+                                    return Err(InvalidChangeRequest::NoSuchPathError {
+                                        path: change.path,
+                                    })
+                                }
+                            },
+                            MutationTarget::Character(_) => {
+                                return Err(InvalidChangeRequest::NoSuchPathError {
+                                    path: change.path,
+                                })
+                            }
+                            MutationTarget::Root(r) => match name {
+                                PathElement::Key(k) => r.delete_key(k),
+                                _ => {
+                                    return Err(InvalidChangeRequest::NoSuchPathError {
+                                        path: change.path,
+                                    })
+                                }
+                            },
                         };
                         self.apply_state_change(state_change);
                         Ok(())
-                    }  else {
+                    } else {
                         Err(InvalidChangeRequest::NoSuchPathError { path: change.path })
                     }
                 } else {
@@ -235,55 +263,66 @@ impl MutableDocument for MutationTracker {
                             MutationTarget::Counter(counter_target) => {
                                 self.apply_state_change(counter_target.increment(*by as i64));
                                 Ok(())
-                            },
-                            _ => Err(InvalidChangeRequest::IncrementForNonCounterObject{path: change.path.clone()})
+                            }
+                            _ => Err(InvalidChangeRequest::IncrementForNonCounterObject {
+                                path: change.path.clone(),
+                            }),
                         }
                     } else {
                         Err(InvalidChangeRequest::NoSuchPathError { path: change.path })
                     }
                 } else {
-                    Err(InvalidChangeRequest::IncrementForNonCounterObject{path: change.path.clone()})
+                    Err(InvalidChangeRequest::IncrementForNonCounterObject {
+                        path: change.path.clone(),
+                    })
                 }
             }
             LocalOperation::Insert(value) => {
                 if let Some(name) = change.path.name() {
                     let index = match name {
                         PathElement::Index(i) => i,
-                        _ => 
+                        _ => {
                             return Err(InvalidChangeRequest::InsertWithNonSequencePath {
                                 path: change.path,
                             })
+                        }
                     };
                     if let Some(parent) = self.state.resolve_path(&change.path.parent()) {
                         match (parent.mutations(), value) {
                             (MutationTarget::List(list_target), val) => {
                                 self.apply_state_change(list_target.insert(*index, val));
                                 Ok(())
-                            },
-                            (MutationTarget::Text(text_target), val) => {
-                                match val {
-                                    Value::Primitive(amp::ScalarValue::Str(s)) => {
-                                        if s.len() == 1 {
-                                            self.apply_state_change(text_target.insert(*index, s.chars().next().unwrap())); 
-                                            Ok(())
-                                        } else {
-                                            Err(InvalidChangeRequest::InsertNonTextInTextObject{path: change.path, object: value.clone()})
-                                        }
-                                    },
-                                    _ => Err(InvalidChangeRequest::InsertNonTextInTextObject{path: change.path, object: value.clone()})
-                                }
-                            },
-                            _ => {
-                                Err(InvalidChangeRequest::NoSuchPathError{path: change.path.clone()})
                             }
+                            (MutationTarget::Text(text_target), val) => match val {
+                                Value::Primitive(amp::ScalarValue::Str(s)) => {
+                                    if s.len() == 1 {
+                                        self.apply_state_change(
+                                            text_target.insert(*index, s.chars().next().unwrap()),
+                                        );
+                                        Ok(())
+                                    } else {
+                                        Err(InvalidChangeRequest::InsertNonTextInTextObject {
+                                            path: change.path,
+                                            object: value.clone(),
+                                        })
+                                    }
+                                }
+                                _ => Err(InvalidChangeRequest::InsertNonTextInTextObject {
+                                    path: change.path,
+                                    object: value.clone(),
+                                }),
+                            },
+                            _ => Err(InvalidChangeRequest::NoSuchPathError {
+                                path: change.path.clone(),
+                            }),
                         }
                     } else {
-                        Err(InvalidChangeRequest::InsertForNonSequenceObject{
-                            path: change.path,
-                        })
+                        Err(InvalidChangeRequest::InsertForNonSequenceObject { path: change.path })
                     }
                 } else {
-                    Err(InvalidChangeRequest::NoSuchPathError{path: change.path.clone()})
+                    Err(InvalidChangeRequest::NoSuchPathError {
+                        path: change.path.clone(),
+                    })
                 }
             }
         }

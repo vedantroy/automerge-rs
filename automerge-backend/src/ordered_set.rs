@@ -823,10 +823,12 @@ mod tests {
     #[test]
     fn test_remove_key_big() {
         //String is not Copy so we have to create our elements first and then insert them
-        let elems: Vec<String> = (0..10000).map(|i| {
-            let j = 9999 - i;
-            format!("a{}", j)
-        }).collect();
+        let elems: Vec<String> = (0..10000)
+            .map(|i| {
+                let j = 9999 - i;
+                format!("a{}", j)
+            })
+            .collect();
 
         let mut s = SkipList::<&str>::new();
         for elem in elems.iter() {

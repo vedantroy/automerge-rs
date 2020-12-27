@@ -1,5 +1,5 @@
-use crate::Path;
 use crate::value::Value;
+use crate::Path;
 use automerge_protocol as amp;
 use automerge_protocol::ObjectID;
 use std::error::Error;
@@ -71,13 +71,9 @@ pub enum InvalidPatch {
         actual_id: ObjectID,
     },
     #[error("Patch attempted to reference an index which did not exist for object {object_id}")]
-    InvalidIndex {
-        object_id: ObjectID,
-        index: usize,
-    },
+    InvalidIndex { object_id: ObjectID, index: usize },
     #[error("Patch sent us a diff which referenced an object which does not exist but had no details on how to create it")]
     UnchangedDiffForNonExistentObject,
-    
 }
 
 #[derive(Error, Debug, PartialEq)]
@@ -99,5 +95,5 @@ pub enum InvalidChangeRequest {
     #[error("attempted to insert something into a text object which is not a character, object: {object:?}")]
     InsertNonTextInTextObject { path: Path, object: Value },
     #[error("attmpted to delete root object")]
-    CannotDeleteRootObject
+    CannotDeleteRootObject,
 }

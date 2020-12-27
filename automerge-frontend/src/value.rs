@@ -1,8 +1,8 @@
 use crate::PathElement;
 use automerge_protocol as amp;
 use serde::Serialize;
-use std::{borrow::Borrow, collections::HashMap};
 use std::convert::TryInto;
+use std::{borrow::Borrow, collections::HashMap};
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
 pub struct Conflicts(HashMap<amp::OpID, Value>);
@@ -156,10 +156,16 @@ pub(crate) fn value_to_op_requests(
                 .iter()
                 .enumerate()
                 .map(|(index, v)| {
-                    value_to_op_requests(list_id.clone(), &PathElement::Index(index.try_into().unwrap()), v, true)
+                    value_to_op_requests(
+                        list_id.clone(),
+                        &PathElement::Index(index.try_into().unwrap()),
+                        v,
+                        true,
+                    )
                 })
                 .collect();
-            let child_requests: Vec<amp::Op> = child_requests_nested.into_iter().flatten().collect();
+            let child_requests: Vec<amp::Op> =
+                child_requests_nested.into_iter().flatten().collect();
             let mut result = vec![make_op];
             result.extend(child_requests);
             result
@@ -212,7 +218,12 @@ pub(crate) fn value_to_op_requests(
                 .map(|(k, v)| {
                     (
                         k.clone(),
-                        value_to_op_requests(map_id.clone(), &PathElement::Key(k.clone()), v, false),
+                        value_to_op_requests(
+                            map_id.clone(),
+                            &PathElement::Key(k.clone()),
+                            v,
+                            false,
+                        ),
                     )
                 })
                 .collect();

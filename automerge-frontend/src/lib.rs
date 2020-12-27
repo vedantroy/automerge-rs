@@ -3,17 +3,17 @@ use automerge_protocol::{ActorID, MapType, ObjectID, Op, OpID, Patch, Request, R
 mod error;
 mod mutation;
 mod object;
-mod value;
-mod state_tree;
 mod path;
+mod state_tree;
+mod value;
 
 pub use error::{
     AutomergeFrontendError, InvalidChangeRequest, InvalidInitialStateError, InvalidPatch,
 };
-use path::PathElement;
-pub use path::Path;
 pub use mutation::{LocalChange, MutableDocument};
 use object::Object;
+pub use path::Path;
+use path::PathElement;
 use state_tree::PathResolution;
 use std::convert::TryFrom;
 use std::error::Error;
@@ -123,17 +123,25 @@ impl FrontendState {
                 } else {
                     root_state
                 };
-                Ok((Some(new_root_state.value()), FrontendState::Reconciled { root_state: new_root_state }))
+                Ok((
+                    Some(new_root_state.value()),
+                    FrontendState::Reconciled {
+                        root_state: new_root_state,
+                    },
+                ))
             }
         }
     }
 
     fn get_object_id(&self, path: &Path) -> Option<ObjectID> {
         match self {
-            FrontendState::WaitingForInFlightRequests{optimistically_updated_root_state, ..} => {
+            FrontendState::WaitingForInFlightRequests {
+                optimistically_updated_root_state,
+                ..
+            } => {
                 println!("In flight: {:?}", optimistically_updated_root_state);
-            },
-            FrontendState::Reconciled{root_state,..} => {
+            }
+            FrontendState::Reconciled { root_state, .. } => {
                 println!("Reconciled: {:?}", root_state);
             }
         };
@@ -146,11 +154,11 @@ impl FrontendState {
 
     fn resolve_path<'a, 'b>(&'a self, path: &'b Path) -> Option<PathResolution<'b>> {
         let root = match self {
-            FrontendState::WaitingForInFlightRequests{
+            FrontendState::WaitingForInFlightRequests {
                 optimistically_updated_root_state,
                 ..
             } => optimistically_updated_root_state,
-            FrontendState::Reconciled{ root_state, .. } => root_state,
+            FrontendState::Reconciled { root_state, .. } => root_state,
         };
         root.resolve_path(path)
     }
@@ -174,7 +182,8 @@ impl FrontendState {
                 reconciled_root_state,
                 optimistically_updated_root_state,
             } => {
-                let mut mutation_tracker = mutation::MutationTracker::new(optimistically_updated_root_state.clone());
+                let mut mutation_tracker =
+                    mutation::MutationTracker::new(optimistically_updated_root_state.clone());
                 change_closure(&mut mutation_tracker)?;
                 let new_root_state = mutation_tracker.state.clone();
                 let new_value = new_root_state.value();
@@ -248,9 +257,7 @@ impl Frontend {
         Frontend {
             actor_id: ActorID::random(),
             seq: 0,
-            state: Some(FrontendState::Reconciled { 
-                root_state,
-            }),
+            state: Some(FrontendState::Reconciled { root_state }),
             version: 0,
             cached_value: Value::Map(HashMap::new(), MapType::Map),
         }
@@ -378,9 +385,7 @@ impl Frontend {
     }
 
     pub fn get_value(&self, path: &Path) -> Option<Value> {
-        self.state
-            .as_ref()
-            .and_then(|s| s.get_value(path))
+        self.state.as_ref().and_then(|s| s.get_value(path))
     }
 }
 

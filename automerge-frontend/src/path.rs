@@ -1,5 +1,5 @@
-use std::fmt;
 use automerge_protocol as amp;
+use std::fmt;
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum PathElement {

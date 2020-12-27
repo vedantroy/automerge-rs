@@ -660,3 +660,112 @@ fn refuse_to_overwrite_counter_value() {
         })
     );
 }
+
+
+#[test]
+fn test_sets_characters_in_text() {
+    let mut doc = Frontend::new();
+    doc.change::<_, InvalidChangeRequest>(None, |doc| {
+        doc.add_change(LocalChange::set(
+            Path::root().key("text"),
+            Value::Text("some".chars().collect()),
+        ))?;
+        Ok(())
+    })
+    .unwrap()
+    .unwrap();
+
+    let request = doc.change::<_, InvalidChangeRequest>(None, |doc| {
+        doc.add_change(LocalChange::set(
+            Path::root().key("text").index(1),
+            Value::Primitive("a".into())
+        ))?;
+        Ok(())
+    }).unwrap().unwrap();
+
+    let text_id = doc.get_object_id(&Path::root().key("text")).unwrap();
+
+
+    let expected_change_request = amp::Request {
+        actor: doc.actor_id.clone(),
+        seq: 2,
+        version: 0,
+        time: request.time,
+        message: None,
+        undoable: true,
+        deps: None,
+        request_type: amp::RequestType::Change,
+        ops: Some(vec![
+            amp::Op {
+                action: amp::OpType::Set,
+                obj: text_id.to_string(),
+                key: 1.into(),
+                child: None,
+                value: Some(amp::ScalarValue::Str("a".into())),
+                insert: false,
+                datatype: None,
+            },
+        ]),
+    };
+    assert_eq!(request, expected_change_request);
+
+    let value = doc.get_value(&Path::root()).unwrap();
+    let expected_value: Value = Value::Map(hashmap!{
+        "text".into() => Value::Text(vec!['s', 'a', 'm', 'e']),
+    }, amp::MapType::Map);
+    assert_eq!(value, expected_value);
+}
+
+#[test]
+fn test_inserts_characters_in_text() {
+    let mut doc = Frontend::new();
+    doc.change::<_, InvalidChangeRequest>(None, |doc| {
+        doc.add_change(LocalChange::set(
+            Path::root().key("text"),
+            Value::Text("same".chars().collect()),
+        ))?;
+        Ok(())
+    })
+    .unwrap()
+    .unwrap();
+
+    let request = doc.change::<_, InvalidChangeRequest>(None, |doc| {
+        doc.add_change(LocalChange::insert(
+            Path::root().key("text").index(1),
+            Value::Primitive("h".into())
+        ))?;
+        Ok(())
+    }).unwrap().unwrap();
+
+    let text_id = doc.get_object_id(&Path::root().key("text")).unwrap();
+
+
+    let expected_change_request = amp::Request {
+        actor: doc.actor_id.clone(),
+        seq: 2,
+        version: 0,
+        time: request.time,
+        message: None,
+        undoable: true,
+        deps: None,
+        request_type: amp::RequestType::Change,
+        ops: Some(vec![
+            amp::Op {
+                action: amp::OpType::Set,
+                obj: text_id.to_string(),
+                key: 1.into(),
+                child: None,
+                value: Some(amp::ScalarValue::Str("h".into())),
+                insert: true,
+                datatype: None,
+            },
+        ]),
+    };
+    assert_eq!(request, expected_change_request);
+
+    let value = doc.get_value(&Path::root()).unwrap();
+    let expected_value: Value = Value::Map(hashmap!{
+        "text".into() => Value::Text(vec!['s', 'h', 'a', 'm', 'e']),
+    }, amp::MapType::Map);
+    assert_eq!(value, expected_value);
+}

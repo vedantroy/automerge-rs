@@ -50,7 +50,7 @@ impl RootTarget {
             amp::ObjectID::Root,
             &PathElement::Key(key.to_string()),
             value,
-            false, 
+            false,
         );
         let new_state = self.root.update(key.to_string(), newvalue.diffapp());
         LocalStateChange {
@@ -62,7 +62,7 @@ impl RootTarget {
     pub(crate) fn delete_key(&self, key: &str) -> LocalStateChange {
         LocalStateChange {
             new_state: self.root.remove(key),
-            new_ops: vec![amp::Op{
+            new_ops: vec![amp::Op {
                 action: amp::OpType::Del,
                 obj: amp::ObjectID::Root.to_string(),
                 key: amp::RequestKey::Str(key.to_string()),
@@ -70,7 +70,7 @@ impl RootTarget {
                 value: None,
                 datatype: None,
                 insert: false,
-            }]
+            }],
         }
     }
 }
@@ -91,20 +91,17 @@ impl CounterTarget {
         let new_state = self.focus.update(diffapp);
         LocalStateChange {
             new_state,
-            new_ops: vec![
-                amp::Op{
-                    action: amp::OpType::Inc,
-                    obj: self.containing_object_id.to_string(),
-                    key: (&self.key_in_container).into(),
-                    child: None,
-                    value: Some(amp::ScalarValue::Int(by)),
-                    datatype: Some(amp::DataType::Counter),
-                    insert: false,
-                }
-            ]
+            new_ops: vec![amp::Op {
+                action: amp::OpType::Inc,
+                obj: self.containing_object_id.to_string(),
+                key: (&self.key_in_container).into(),
+                child: None,
+                value: Some(amp::ScalarValue::Int(by)),
+                datatype: Some(amp::DataType::Counter),
+                insert: false,
+            }],
         }
     }
-
 }
 
 pub struct MapTarget {
@@ -114,7 +111,6 @@ pub struct MapTarget {
 }
 
 impl MapTarget {
-
     pub(crate) fn set_key(&self, key: &str, value: &Value) -> LocalStateChange {
         let newvalue = MultiValue::new_from_value(
             self.value.object_id.clone(),
@@ -147,20 +143,17 @@ impl MapTarget {
         let diffapp = DiffApplicationResult::pure(new_mv);
         LocalStateChange {
             new_state: self.focus.update(diffapp),
-            new_ops: vec![
-                amp::Op{
-                    action: amp::OpType::Del,
-                    obj: self.value.object_id.to_string(),
-                    key: amp::RequestKey::Str(key.to_string()),
-                    child: None,
-                    value: None,
-                    datatype: None,
-                    insert: false,
-                }
-            ]
+            new_ops: vec![amp::Op {
+                action: amp::OpType::Del,
+                obj: self.value.object_id.to_string(),
+                key: amp::RequestKey::Str(key.to_string()),
+                child: None,
+                value: None,
+                datatype: None,
+                insert: false,
+            }],
         }
     }
-
 }
 
 pub struct TableTarget {
@@ -202,20 +195,17 @@ impl TableTarget {
         let diffapp = DiffApplicationResult::pure(new_mv);
         LocalStateChange {
             new_state: self.focus.update(diffapp),
-            new_ops: vec![
-                amp::Op{
-                    action: amp::OpType::Del,
-                    obj: self.value.object_id.to_string(),
-                    key: amp::RequestKey::Str(key.to_string()),
-                    child: None,
-                    value: None,
-                    datatype: None,
-                    insert: false,
-                }
-            ]
+            new_ops: vec![amp::Op {
+                action: amp::OpType::Del,
+                obj: self.value.object_id.to_string(),
+                key: amp::RequestKey::Str(key.to_string()),
+                child: None,
+                value: None,
+                datatype: None,
+                insert: false,
+            }],
         }
     }
-
 }
 
 pub struct TextTarget {
@@ -238,19 +228,17 @@ impl TextTarget {
         let diffapp = DiffApplicationResult::pure(mv).with_updates(Some(
             hashmap!(self.value.object_id.clone() => updated.clone()),
         ));
-        LocalStateChange{
+        LocalStateChange {
             new_state: (self.update)(diffapp),
-            new_ops: vec![
-                amp::Op{
-                    action: amp::OpType::Set,
-                    obj: self.value.object_id.to_string(),
-                    key: amp::RequestKey::Num(index.try_into().unwrap()),
-                    child: None,
-                    value: Some(amp::ScalarValue::Str(c.to_string())),
-                    datatype: None,
-                    insert: true,
-                }
-            ]
+            new_ops: vec![amp::Op {
+                action: amp::OpType::Set,
+                obj: self.value.object_id.to_string(),
+                key: amp::RequestKey::Num(index.try_into().unwrap()),
+                child: None,
+                value: Some(amp::ScalarValue::Str(c.to_string())),
+                datatype: None,
+                insert: true,
+            }],
         }
     }
 
@@ -270,7 +258,7 @@ impl TextTarget {
         let new_state = (self.update)(diffapp);
         LocalStateChange {
             new_state,
-            new_ops: vec![amp::Op{
+            new_ops: vec![amp::Op {
                 action: amp::OpType::Set,
                 obj: self.value.object_id.to_string(),
                 key: amp::RequestKey::Num(index.try_into().unwrap()),
@@ -278,7 +266,7 @@ impl TextTarget {
                 value: Some(amp::ScalarValue::Str(c.to_string())),
                 datatype: None,
                 insert: false,
-            }]
+            }],
         }
     }
 
@@ -298,7 +286,7 @@ impl TextTarget {
         let new_state = (self.update)(diffapp);
         LocalStateChange {
             new_state,
-            new_ops: vec![amp::Op{
+            new_ops: vec![amp::Op {
                 action: amp::OpType::Del,
                 obj: self.value.object_id.to_string(),
                 key: amp::RequestKey::Num(index.try_into().unwrap()),
@@ -357,7 +345,7 @@ impl ListTarget {
                 hashmap!(self.value.object_id.clone() => new_value.clone()),
             ))
         });
-        LocalStateChange{
+        LocalStateChange {
             new_state: self.focus.update(diffapp),
             new_ops: newvalue.ops,
         }
@@ -371,9 +359,9 @@ impl ListTarget {
         let diffapp = DiffApplicationResult::pure(mv).with_updates(Some(
             hashmap!(self.value.object_id.clone() => new_value.clone()),
         ));
-        LocalStateChange{
+        LocalStateChange {
             new_state: self.focus.update(diffapp),
-            new_ops: vec![amp::Op{
+            new_ops: vec![amp::Op {
                 action: amp::OpType::Del,
                 obj: self.value.object_id.to_string(),
                 key: amp::RequestKey::Num(index as u64),
@@ -381,10 +369,9 @@ impl ListTarget {
                 value: None,
                 datatype: None,
                 insert: false,
-            }]
+            }],
         }
     }
-
 }
 
 pub struct CharTarget {
@@ -396,9 +383,9 @@ pub struct CharTarget {
 
 impl CharTarget {
     pub(crate) fn set(&self, c: char) -> LocalStateChange {
-        LocalStateChange{
+        LocalStateChange {
             new_state: (self.update)(DiffApplicationResult::pure(MultiChar::new_from_char(c))),
-            new_ops: vec![amp::Op{
+            new_ops: vec![amp::Op {
                 action: amp::OpType::Set,
                 obj: self.containing_object_id.to_string(),
                 key: amp::RequestKey::Num(self.index),
@@ -406,7 +393,7 @@ impl CharTarget {
                 value: Some(amp::ScalarValue::Str(c.to_string())),
                 datatype: None,
                 insert: false,
-            }]
+            }],
         }
     }
 }
@@ -425,12 +412,11 @@ impl PrimitiveTarget {
             v,
             false,
         );
-        LocalStateChange{
+        LocalStateChange {
             new_state: self.focus.update(newvalue.diffapp()),
             new_ops: newvalue.ops,
         }
     }
-
 }
 
 pub struct PathResolution<'a> {
@@ -673,11 +659,11 @@ impl StateTree {
                                                 object_id: None,
                                                 register: Box::new(target.clone()),
                                                 mutation_target: MutationTarget::Character(
-                                                    CharTarget { 
+                                                    CharTarget {
                                                         containing_object_id: parent_object_id,
                                                         index: i.try_into().unwrap(),
                                                         update,
-                                                        delete ,
+                                                        delete,
                                                     },
                                                 ),
                                             });
@@ -702,7 +688,11 @@ impl StateTree {
                             multivalue: current_obj.clone(),
                             focus,
                         }),
-                        _ => MutationTarget::Primitive(PrimitiveTarget { containing_object_id: parent_object_id.clone(), key_in_container, focus }),
+                        _ => MutationTarget::Primitive(PrimitiveTarget {
+                            containing_object_id: parent_object_id.clone(),
+                            key_in_container,
+                            focus,
+                        }),
                     },
                     StateTreeValue::Internal(composite) => match composite {
                         StateTreeComposite::Map(m) => MutationTarget::Map(MapTarget {
@@ -720,9 +710,11 @@ impl StateTree {
                             multivalue: current_obj.clone(),
                             focus,
                         }),
-                        StateTreeComposite::Text(_) => {
-                            panic!("Unexpectedly reached text object")
-                        }
+                        StateTreeComposite::Text(t) => MutationTarget::Text(TextTarget {
+                            multivalue: current_obj.clone(),
+                            value: t,
+                            update: Box::new(move |d| focus.update(d)),
+                        }),
                     },
                 };
                 Some(PathResolution {
@@ -806,7 +798,6 @@ where
             (None, None) => DiffApplicationResult((self.0 .0, None)),
         }
     }
-
 }
 
 struct NewValue<T> {
@@ -816,10 +807,12 @@ struct NewValue<T> {
 }
 
 impl<T> NewValue<T> {
-    fn diffapp(&self) -> DiffApplicationResult<T> 
-        where  T: Clone
+    fn diffapp(&self) -> DiffApplicationResult<T>
+    where
+        T: Clone,
     {
-        DiffApplicationResult::pure(self.value.clone()).with_updates(Some(self.index_updates.clone()))
+        DiffApplicationResult::pure(self.value.clone())
+            .with_updates(Some(self.index_updates.clone()))
     }
 
     fn init(t: T, op: amp::Op) -> NewValue<T> {
@@ -897,7 +890,8 @@ impl MultiValue {
                     insert,
                 };
                 let map = im::HashMap::new();
-                let newvalue: NewValue<im::HashMap<String, MultiValue>> = NewValue::init(map, make_op);
+                let newvalue: NewValue<im::HashMap<String, MultiValue>> =
+                    NewValue::init(map, make_op);
                 props
                     .iter()
                     .fold(newvalue, |newvalue_so_far, (key, value)| {
@@ -912,12 +906,12 @@ impl MultiValue {
                         })
                     })
                     .map(|map| {
-                        MultiValue::new_from_statetree_value(
-                             StateTreeValue::Internal(StateTreeComposite::Map(StateTreeMap {
+                        MultiValue::new_from_statetree_value(StateTreeValue::Internal(
+                            StateTreeComposite::Map(StateTreeMap {
                                 object_id: map_id.clone(),
                                 props: map,
-                            })),
-                        )
+                            }),
+                        ))
                     })
             }
             Value::Map(props, amp::MapType::Table) => {
@@ -932,7 +926,8 @@ impl MultiValue {
                     datatype: None,
                     insert,
                 };
-                let newvalue: NewValue<im::HashMap<String, MultiValue>> = NewValue::init(table, make_op);
+                let newvalue: NewValue<im::HashMap<String, MultiValue>> =
+                    NewValue::init(table, make_op);
                 props
                     .iter()
                     .fold(newvalue, |newvalue_so_far, (key, value)| {
@@ -947,12 +942,12 @@ impl MultiValue {
                         })
                     })
                     .map(|table| {
-                        MultiValue::new_from_statetree_value(
-                             StateTreeValue::Internal(StateTreeComposite::Table(StateTreeTable {
+                        MultiValue::new_from_statetree_value(StateTreeValue::Internal(
+                            StateTreeComposite::Table(StateTreeTable {
                                 object_id: table_id.clone(),
                                 props: table,
-                            })),
-                        )
+                            }),
+                        ))
                     })
             }
             Value::Sequence(vals) => {
@@ -976,11 +971,11 @@ impl MultiValue {
                                 list_id.clone(),
                                 &PathElement::Index(index.try_into().unwrap()),
                                 elem,
-                                true
+                                true,
                             )
                             .map(|e| {
                                 let mut new_l = l.clone();
-                                new_l.push_back(e); 
+                                new_l.push_back(e);
                                 new_l
                             })
                         })
@@ -1006,29 +1001,40 @@ impl MultiValue {
                     datatype: None,
                     insert,
                 };
-                let newvalue: NewValue<im::Vector<MultiChar>> = NewValue::init(im::Vector::new(), make_op);
-                chars.iter().enumerate().fold(newvalue, |newvalue_so_far, (index, c)| {
-                    newvalue_so_far.and_then(|newval_chars| {
-                        NewValue::init(MultiChar::new_from_char(*c), amp::Op{
-                            action: amp::OpType::Set,
-                            obj: text_id.to_string(),
-                            key: amp::RequestKey::Num(index as u64),
-                            child: None,
-                            value: Some(amp::ScalarValue::Str(c.to_string())),
-                            datatype: None,
-                            insert: true,
-                        }).map(|newchar| {
-                            let mut chars = newval_chars.clone();
-                            chars.push_back(newchar);
-                            chars
-                        }) 
+                let newvalue: NewValue<im::Vector<MultiChar>> =
+                    NewValue::init(im::Vector::new(), make_op);
+                chars
+                    .iter()
+                    .enumerate()
+                    .fold(newvalue, |newvalue_so_far, (index, c)| {
+                        newvalue_so_far.and_then(|newval_chars| {
+                            NewValue::init(
+                                MultiChar::new_from_char(*c),
+                                amp::Op {
+                                    action: amp::OpType::Set,
+                                    obj: text_id.to_string(),
+                                    key: amp::RequestKey::Num(index as u64),
+                                    child: None,
+                                    value: Some(amp::ScalarValue::Str(c.to_string())),
+                                    datatype: None,
+                                    insert: true,
+                                },
+                            )
+                            .map(|newchar| {
+                                let mut chars = newval_chars.clone();
+                                chars.push_back(newchar);
+                                chars
+                            })
+                        })
                     })
-                }).map(|newchars| MultiValue::new_from_statetree_value(
-                    StateTreeValue::Internal(StateTreeComposite::Text(StateTreeText{
-                        object_id: text_id.clone(),
-                        chars: newchars,
-                    }))
-                ))
+                    .map(|newchars| {
+                        MultiValue::new_from_statetree_value(StateTreeValue::Internal(
+                            StateTreeComposite::Text(StateTreeText {
+                                object_id: text_id.clone(),
+                                chars: newchars,
+                            }),
+                        ))
+                    })
             }
             Value::Primitive(v) => NewValue::init(
                 MultiValue::new_from_statetree_value(StateTreeValue::Leaf(v.clone())),
@@ -1040,8 +1046,8 @@ impl MultiValue {
                     value: Some(v.clone()),
                     datatype: Some(value_to_datatype(v)),
                     insert,
-                }
-            )
+                },
+            ),
         }
     }
 

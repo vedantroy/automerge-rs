@@ -139,7 +139,7 @@ impl MapTarget {
         let new_composite = StateTreeComposite::Map(new_value);
         let new_mv = self
             .multivalue
-            .update_default(StateTreeValue::Internal(new_composite.clone()));
+            .update_default(StateTreeValue::Internal(new_composite));
         let diffapp = DiffApplicationResult::pure(new_mv);
         LocalStateChange {
             new_state: self.focus.update(diffapp),
@@ -191,7 +191,7 @@ impl TableTarget {
         let new_composite = StateTreeComposite::Table(new_value);
         let new_mv = self
             .multivalue
-            .update_default(StateTreeValue::Internal(new_composite.clone()));
+            .update_default(StateTreeValue::Internal(new_composite));
         let diffapp = DiffApplicationResult::pure(new_mv);
         LocalStateChange {
             new_state: self.focus.update(diffapp),
@@ -225,9 +225,8 @@ impl TextTarget {
         let mv = self
             .multivalue
             .update_default(StateTreeValue::Internal(updated.clone()));
-        let diffapp = DiffApplicationResult::pure(mv).with_updates(Some(
-            hashmap!(self.value.object_id.clone() => updated.clone()),
-        ));
+        let diffapp = DiffApplicationResult::pure(mv)
+            .with_updates(Some(hashmap!(self.value.object_id.clone() => updated)));
         LocalStateChange {
             new_state: (self.update)(diffapp),
             new_ops: vec![amp::Op {
@@ -252,9 +251,8 @@ impl TextTarget {
         let mv = self
             .multivalue
             .update_default(StateTreeValue::Internal(updated.clone()));
-        let diffapp = DiffApplicationResult::pure(mv).with_updates(Some(
-            hashmap!(self.value.object_id.clone() => updated.clone()),
-        ));
+        let diffapp = DiffApplicationResult::pure(mv)
+            .with_updates(Some(hashmap!(self.value.object_id.clone() => updated)));
         let new_state = (self.update)(diffapp);
         LocalStateChange {
             new_state,
@@ -280,9 +278,8 @@ impl TextTarget {
         let mv = self
             .multivalue
             .update_default(StateTreeValue::Internal(updated.clone()));
-        let diffapp = DiffApplicationResult::pure(mv).with_updates(Some(
-            hashmap!(self.value.object_id.clone() => updated.clone()),
-        ));
+        let diffapp = DiffApplicationResult::pure(mv)
+            .with_updates(Some(hashmap!(self.value.object_id.clone() => updated)));
         let new_state = (self.update)(diffapp);
         LocalStateChange {
             new_state,
@@ -341,9 +338,8 @@ impl ListTarget {
             let mv = self
                 .multivalue
                 .update_default(StateTreeValue::Internal(new_value.clone()));
-            DiffApplicationResult::pure(mv).with_updates(Some(
-                hashmap!(self.value.object_id.clone() => new_value.clone()),
-            ))
+            DiffApplicationResult::pure(mv)
+                .with_updates(Some(hashmap!(self.value.object_id.clone() => new_value)))
         });
         LocalStateChange {
             new_state: self.focus.update(diffapp),
@@ -356,9 +352,8 @@ impl ListTarget {
         let mv = self
             .multivalue
             .update_default(StateTreeValue::Internal(new_value.clone()));
-        let diffapp = DiffApplicationResult::pure(mv).with_updates(Some(
-            hashmap!(self.value.object_id.clone() => new_value.clone()),
-        ));
+        let diffapp = DiffApplicationResult::pure(mv)
+            .with_updates(Some(hashmap!(self.value.object_id.clone() => new_value)));
         LocalStateChange {
             new_state: self.focus.update(diffapp),
             new_ops: vec![amp::Op {
@@ -375,59 +370,56 @@ impl ListTarget {
 }
 
 pub struct CharTarget {
-    containing_object_id: amp::ObjectID,
-    index: u64,
-    update: Box<dyn Fn(DiffApplicationResult<MultiChar>) -> StateTree>,
-    delete: Box<dyn Fn() -> StateTree>,
-}
+    /*containing_object_id: amp::ObjectID,*/
+/*index: u64,*/
+/*update: Box<dyn Fn(DiffApplicationResult<MultiChar>) -> StateTree>,*/
+/*delete: Box<dyn Fn() -> StateTree>,*/}
 
 impl CharTarget {
-    pub(crate) fn set(&self, c: char) -> LocalStateChange {
-        LocalStateChange {
-            new_state: (self.update)(DiffApplicationResult::pure(MultiChar::new_from_char(c))),
-            new_ops: vec![amp::Op {
-                action: amp::OpType::Set,
-                obj: self.containing_object_id.to_string(),
-                key: amp::RequestKey::Num(self.index),
-                child: None,
-                value: Some(amp::ScalarValue::Str(c.to_string())),
-                datatype: None,
-                insert: false,
-            }],
-        }
-    }
+    /*pub(crate) fn set(&self, c: char) -> LocalStateChange {*/
+    /*LocalStateChange {*/
+    /*new_state: (self.update)(DiffApplicationResult::pure(MultiChar::new_from_char(c))),*/
+    /*new_ops: vec![amp::Op {*/
+    /*action: amp::OpType::Set,*/
+    /*obj: self.containing_object_id.to_string(),*/
+    /*key: amp::RequestKey::Num(self.index),*/
+    /*child: None,*/
+    /*value: Some(amp::ScalarValue::Str(c.to_string())),*/
+    /*datatype: None,*/
+    /*insert: false,*/
+    /*}],*/
+    /*}*/
+    /*}*/
 }
 
 pub struct PrimitiveTarget {
-    containing_object_id: amp::ObjectID,
-    key_in_container: PathElement,
-    focus: Box<focus::Focus>,
-}
+    /*containing_object_id: amp::ObjectID,*/
+/*key_in_container: PathElement,*/
+/*focus: Box<focus::Focus>,*/}
 
 impl PrimitiveTarget {
-    pub(crate) fn set(&self, v: &Value) -> LocalStateChange {
-        let newvalue = MultiValue::new_from_value(
-            self.containing_object_id.clone(),
-            &self.key_in_container,
-            v,
-            false,
-        );
-        LocalStateChange {
-            new_state: self.focus.update(newvalue.diffapp()),
-            new_ops: newvalue.ops,
-        }
-    }
+    /*pub(crate) fn set(&self, v: &Value) -> LocalStateChange {*/
+    /*let newvalue = MultiValue::new_from_value(*/
+    /*self.containing_object_id.clone(),*/
+    /*&self.key_in_container,*/
+    /*v,*/
+    /*false,*/
+    /*);*/
+    /*LocalStateChange {*/
+    /*new_state: self.focus.update(newvalue.diffapp()),*/
+    /*new_ops: newvalue.ops,*/
+    /*}*/
+    /*}*/
 }
 
-pub struct PathResolution<'a> {
-    path: &'a Path,
+pub struct PathResolution {
     pub containing_object_id: amp::ObjectID,
     pub object_id: Option<amp::ObjectID>,
     register: Box<dyn Register>,
     mutation_target: MutationTarget,
 }
 
-impl<'a> PathResolution<'a> {
+impl PathResolution {
     pub fn default_value(&self) -> Value {
         self.register.default_value()
     }
@@ -460,11 +452,11 @@ impl StateTree {
                 if *object_id != amp::ObjectID::Root {
                     Err(error::InvalidPatch::PatchDidNotBeginAtRoot)
                 } else if *obj_type != amp::MapType::Map {
-                    return Err(error::InvalidPatch::MismatchingObjectType {
+                    Err(error::InvalidPatch::MismatchingObjectType {
                         object_id: amp::ObjectID::Root,
                         patch_expected_type: Some(amp::ObjType::map()),
                         actual_type: Some(amp::ObjType::Map(*obj_type)),
-                    });
+                    })
                 } else {
                     self.apply_map_diff(diff)
                 }
@@ -514,10 +506,9 @@ impl StateTree {
         }
     }
 
-    pub(crate) fn resolve_path<'b>(&self, path: &'b Path) -> Option<PathResolution<'b>> {
+    pub(crate) fn resolve_path(&self, path: &Path) -> Option<PathResolution> {
         if path.is_root() {
             return Some(PathResolution {
-                path,
                 containing_object_id: amp::ObjectID::Root,
                 object_id: Some(amp::ObjectID::Root),
                 register: Box::new(MultiValue::new_from_statetree_value(
@@ -602,68 +593,18 @@ impl StateTree {
                                     },
                                 )) => {
                                     if let Some(target) = chars.get(i as usize) {
-                                        parent_object_id = oid.clone();
+                                        parent_object_id = oid;
                                         if stack.is_empty() {
-                                            let oid_for_update = oid.clone();
-                                            let chars_for_update = chars.clone();
-                                            let focus_for_update = focus.clone();
-                                            let current_for_update = current_obj.clone();
-                                            let update: Box<
-                                                dyn Fn(
-                                                    DiffApplicationResult<MultiChar>,
-                                                )
-                                                    -> StateTree,
-                                            > = Box::new(move |d| {
-                                                let diffapp = d.and_then(|c| {
-                                                    let new_chars = chars_for_update
-                                                        .update(i.try_into().unwrap(), c);
-                                                    let new_value =
-                                                        StateTreeComposite::Text(StateTreeText {
-                                                            object_id: oid_for_update.clone(),
-                                                            chars: new_chars,
-                                                        });
-                                                    let mv = current_for_update.update_default(
-                                                        StateTreeValue::Internal(new_value.clone()),
-                                                    );
-                                                    DiffApplicationResult::pure(mv).with_updates(
-                                                        Some(im::HashMap::new().update(
-                                                            oid_for_update.clone(),
-                                                            new_value.clone(),
-                                                        )),
-                                                    )
-                                                });
-                                                focus_for_update.update(diffapp)
-                                            });
-                                            let focus_for_delete = focus.clone();
-                                            let oid_for_delete = oid.clone();
-                                            let chars_for_delete = chars.clone();
-                                            let delete: Box<dyn Fn() -> StateTree> =
-                                                Box::new(move || {
-                                                    let mut new_chars = chars_for_delete.clone();
-                                                    new_chars.remove(i.try_into().unwrap());
-                                                    let new_val = StateTreeValue::Internal(
-                                                        StateTreeComposite::Text(StateTreeText {
-                                                            object_id: oid_for_delete.clone(),
-                                                            chars: new_chars,
-                                                        }),
-                                                    );
-                                                    focus_for_delete.update(
-                                                        DiffApplicationResult::pure(
-                                                            current_obj.update_default(new_val),
-                                                        ),
-                                                    )
-                                                });
                                             return Some(PathResolution {
-                                                path: &path,
-                                                containing_object_id: parent_object_id.clone(),
+                                                containing_object_id: parent_object_id,
                                                 object_id: None,
                                                 register: Box::new(target.clone()),
                                                 mutation_target: MutationTarget::Character(
                                                     CharTarget {
-                                                        containing_object_id: parent_object_id,
-                                                        index: i.try_into().unwrap(),
-                                                        update,
-                                                        delete,
+                                                        /*containing_object_id: parent_object_id,*/
+                                                        /*index: i.try_into().unwrap(),*/
+                                                        /*update,*/
+                                                        /*delete,*/
                                                     },
                                                 ),
                                             });
@@ -689,9 +630,9 @@ impl StateTree {
                             focus,
                         }),
                         _ => MutationTarget::Primitive(PrimitiveTarget {
-                            containing_object_id: parent_object_id.clone(),
-                            key_in_container,
-                            focus,
+                            /*containing_object_id: parent_object_id.clone(),*/
+                            /*key_in_container,*/
+                            /*focus,*/
                         }),
                     },
                     StateTreeValue::Internal(composite) => match composite {
@@ -718,12 +659,11 @@ impl StateTree {
                     },
                 };
                 Some(PathResolution {
-                    path: &path,
-                    containing_object_id: parent_object_id.clone(),
+                    containing_object_id: parent_object_id,
                     object_id: current_obj
                         .default_statetree_value()
                         .and_then(|o| o.object_id()),
-                    register: Box::new(current_obj.clone()),
+                    register: Box::new(current_obj),
                     mutation_target: target,
                 })
             } else {
@@ -1060,9 +1000,9 @@ impl MultiValue {
             let application_result = if let Some(existing_value) = self.0.get(opid) {
                 match existing_value {
                     StateTreeValue::Leaf(_) => StateTreeValue::new_from_diff(subdiff),
-                    StateTreeValue::Internal(composite) => Ok(composite
-                        .apply_diff(subdiff)?
-                        .map(|c| StateTreeValue::Internal(c))),
+                    StateTreeValue::Internal(composite) => {
+                        Ok(composite.apply_diff(subdiff)?.map(StateTreeValue::Internal))
+                    }
                 }
             } else {
                 StateTreeValue::new_from_diff(subdiff)
@@ -1071,7 +1011,7 @@ impl MultiValue {
                 .map(|u| u.update(opid.clone(), application_result.value().clone()))
                 .with_updates(application_result.index_updates());
         }
-        Ok(result.map(|new_values| MultiValue(new_values)))
+        Ok(result.map(MultiValue))
     }
 
     fn default_statetree_value(&self) -> Option<StateTreeValue> {
@@ -1164,18 +1104,7 @@ impl MultiChar {
         let mut opids: Vec<&amp::OpID> = self.0.keys().collect();
         opids.sort();
         opids.reverse();
-        opids.first().map(|oid| self.0.get(oid).unwrap().clone())
-    }
-
-    fn default_opid(&self) -> amp::OpID {
-        let mut opids: Vec<&amp::OpID> = self.0.keys().collect();
-        opids.sort();
-        opids.reverse();
-        (*opids.first().unwrap()).clone()
-    }
-
-    fn update_default(&self, new_char: char) -> MultiChar {
-        MultiChar(self.0.update(self.default_opid(), new_char))
+        opids.first().map(|oid| *self.0.get(*oid).unwrap())
     }
 }
 
@@ -1215,9 +1144,7 @@ impl StateTreeValue {
         diff: &amp::Diff,
     ) -> Result<DiffApplicationResult<StateTreeValue>, error::InvalidPatch> {
         match diff {
-            amp::Diff::Value(v) => {
-                return Ok(DiffApplicationResult::pure(StateTreeValue::Leaf(v.clone())))
-            }
+            amp::Diff::Value(v) => Ok(DiffApplicationResult::pure(StateTreeValue::Leaf(v.clone()))),
             amp::Diff::Map(amp::MapDiff {
                 object_id,
                 obj_type,
@@ -1471,7 +1398,7 @@ impl StateTreeComposite {
                     if *obj_type != amp::MapType::Map {
                         Err(error::InvalidPatch::MismatchingObjectType {
                             object_id: this_obj_id.clone(),
-                            patch_expected_type: Some(amp::ObjType::Map(obj_type.clone())),
+                            patch_expected_type: Some(amp::ObjType::Map(*obj_type)),
                             actual_type: Some(self.obj_type()),
                         })
                     } else {
@@ -1508,7 +1435,7 @@ impl StateTreeComposite {
                     if *obj_type != amp::MapType::Table {
                         Err(error::InvalidPatch::MismatchingObjectType {
                             object_id: this_obj_id.clone(),
-                            patch_expected_type: Some(amp::ObjType::Map(obj_type.clone())),
+                            patch_expected_type: Some(amp::ObjType::Map(*obj_type)),
                             actual_type: Some(self.obj_type()),
                         })
                     } else {
@@ -1561,7 +1488,7 @@ impl StateTreeComposite {
                         if *obj_type != amp::SequenceType::List {
                             Err(error::InvalidPatch::MismatchingObjectType {
                                 object_id: this_obj_id.clone(),
-                                patch_expected_type: Some(amp::ObjType::Sequence(obj_type.clone())),
+                                patch_expected_type: Some(amp::ObjType::Sequence(*obj_type)),
                                 actual_type: Some(self.obj_type()),
                             })
                         } else {
@@ -1613,7 +1540,7 @@ impl StateTreeComposite {
                         if *obj_type != amp::SequenceType::Text {
                             Err(error::InvalidPatch::MismatchingObjectType {
                                 object_id: this_obj_id.clone(),
-                                patch_expected_type: Some(amp::ObjType::Sequence(obj_type.clone())),
+                                patch_expected_type: Some(amp::ObjType::Sequence(*obj_type)),
                                 actual_type: Some(self.obj_type()),
                             })
                         } else {

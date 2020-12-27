@@ -2,7 +2,6 @@ use automerge_protocol::{ActorID, MapType, ObjectID, Op, OpID, Patch, Request, R
 
 mod error;
 mod mutation;
-mod object;
 mod path;
 mod state_tree;
 mod value;
@@ -11,14 +10,13 @@ pub use error::{
     AutomergeFrontendError, InvalidChangeRequest, InvalidInitialStateError, InvalidPatch,
 };
 pub use mutation::{LocalChange, MutableDocument};
-use object::Object;
 pub use path::Path;
 use path::PathElement;
 use state_tree::PathResolution;
+use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::error::Error;
 use std::time;
-use std::{collections::HashMap, rc::Rc};
 pub use value::{Conflicts, Value};
 
 /// Tracks the possible states of the frontend
@@ -152,7 +150,7 @@ impl FrontendState {
         self.resolve_path(path).map(|r| r.default_value())
     }
 
-    fn resolve_path<'a, 'b>(&'a self, path: &'b Path) -> Option<PathResolution<'b>> {
+    fn resolve_path(&self, path: &Path) -> Option<PathResolution> {
         let root = match self {
             FrontendState::WaitingForInFlightRequests {
                 optimistically_updated_root_state,
@@ -183,7 +181,7 @@ impl FrontendState {
                 optimistically_updated_root_state,
             } => {
                 let mut mutation_tracker =
-                    mutation::MutationTracker::new(optimistically_updated_root_state.clone());
+                    mutation::MutationTracker::new(optimistically_updated_root_state);
                 change_closure(&mut mutation_tracker)?;
                 let new_root_state = mutation_tracker.state.clone();
                 let new_value = new_root_state.value();
@@ -248,11 +246,6 @@ impl Default for Frontend {
 
 impl Frontend {
     pub fn new() -> Self {
-        let mut objects = HashMap::new();
-        objects.insert(
-            ObjectID::Root,
-            Rc::new(Object::Map(ObjectID::Root, HashMap::new(), MapType::Map)),
-        );
         let root_state = state_tree::StateTree::new();
         Frontend {
             actor_id: ActorID::random(),

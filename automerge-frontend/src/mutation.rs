@@ -107,7 +107,7 @@ impl MutationTracker {
         }
     }
 
-    fn apply_state_change(&mut self, change: LocalStateChange) -> () {
+    fn apply_state_change(&mut self, change: LocalStateChange) {
         self.state = change.new_state;
         self.ops.extend(change.new_ops);
     }
@@ -257,7 +257,7 @@ impl MutableDocument for MutationTracker {
                 }
             }
             LocalOperation::Increment(by) => {
-                if let Some(_) = change.path.name() {
+                if change.path.name().is_some() {
                     if let Some(pr) = self.state.resolve_path(&change.path) {
                         match pr.mutations() {
                             MutationTarget::Counter(counter_target) => {

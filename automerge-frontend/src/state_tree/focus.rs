@@ -17,15 +17,6 @@ impl Focus {
         }
     }
 
-    pub(crate) fn delete(&self) -> StateTree {
-        match &self.0 {
-            FocusInner::Root(root) => root.delete(),
-            FocusInner::Map(mapfocus) => mapfocus.delete(),
-            FocusInner::Table(tablefocus) => tablefocus.delete(),
-            FocusInner::List(listfocus) => listfocus.delete(),
-        }
-    }
-
     pub fn new_root(root_tree: StateTree, key: String) -> Focus {
         Focus(FocusInner::Root(RootFocus {
             root: root_tree,
@@ -94,10 +85,6 @@ impl RootFocus {
     fn update(&self, diffapp: DiffApplicationResult<MultiValue>) -> StateTree {
         self.root.update(self.key.clone(), diffapp)
     }
-
-    fn delete(&self) -> StateTree {
-        self.root.remove(&self.key)
-    }
 }
 
 #[derive(Clone)]
@@ -122,19 +109,6 @@ impl MapFocus {
             .with_updates(Some(hashmap!(self.map.object_id.clone() => updated)))
         });
         self.parent_focus.update(new_diffapp)
-    }
-
-    fn delete(&self) -> StateTree {
-        let new_val =
-            self.multivalue
-                .update_default(StateTreeValue::Internal(StateTreeComposite::Map(
-                    StateTreeMap {
-                        object_id: self.map.object_id.clone(),
-                        props: self.map.props.without(&self.key),
-                    },
-                )));
-        self.parent_focus
-            .update(DiffApplicationResult::pure(new_val))
     }
 }
 
@@ -161,19 +135,6 @@ impl TableFocus {
         });
         self.parent_focus.update(new_diffapp)
     }
-
-    fn delete(&self) -> StateTree {
-        let new_val =
-            self.multivalue
-                .update_default(StateTreeValue::Internal(StateTreeComposite::Table(
-                    StateTreeTable {
-                        object_id: self.table.object_id.clone(),
-                        props: self.table.props.without(&self.key),
-                    },
-                )));
-        self.parent_focus
-            .update(DiffApplicationResult::pure(new_val))
-    }
 }
 
 #[derive(Clone)]
@@ -198,20 +159,5 @@ impl ListFocus {
             .with_updates(Some(hashmap!(self.list.object_id.clone() => updated)))
         });
         self.parent_focus.update(new_diffapp)
-    }
-
-    fn delete(&self) -> StateTree {
-        let mut new_elems = self.list.elements.clone();
-        new_elems.remove(self.index);
-        let new_val =
-            self.multivalue
-                .update_default(StateTreeValue::Internal(StateTreeComposite::List(
-                    StateTreeList {
-                        object_id: self.list.object_id.clone(),
-                        elements: new_elems,
-                    },
-                )));
-        self.parent_focus
-            .update(DiffApplicationResult::pure(new_val))
     }
 }

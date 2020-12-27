@@ -71,7 +71,7 @@ impl State {
     pub fn ack(&mut self, ack_version: JsValue) -> Result<(), JsValue> {
         let ver_no = ack_version
             .as_f64()
-            .ok_or(to_js_err("ack : invalid version"))?;
+            .ok_or_else(|| to_js_err("ack : invalid version"))?;
         self.backend.ack(ver_no as u64);
         Ok(())
     }

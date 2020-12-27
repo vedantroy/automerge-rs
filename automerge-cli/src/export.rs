@@ -71,6 +71,7 @@ mod tests {
 
         let (_, initial_change) =
             automerge_frontend::Frontend::new_with_initial_state(value).unwrap();
+        println!("Initial change: {:?}", initial_change);
         let mut backend = automerge_backend::Backend::init();
         backend.apply_local_change(initial_change).unwrap();
 

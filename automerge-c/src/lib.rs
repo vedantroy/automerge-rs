@@ -144,7 +144,6 @@ pub unsafe extern "C" fn automerge_apply_local_change(
             -1
         }
     } else {
-        // json parse error
         -1
     }
 }

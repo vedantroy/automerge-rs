@@ -82,7 +82,7 @@ impl ResolvedRoot {
         let new_state = self.root.update(key.to_string(), newvalue.diffapp());
         LocalStateChange {
             new_state,
-            new_ops: newvalue.ops,
+            new_ops: newvalue.ops(),
         }
     }
 
@@ -157,7 +157,7 @@ impl ResolvedMap {
         });
         LocalStateChange {
             new_state: self.focus.update(diffapp),
-            new_ops: newvalue.ops,
+            new_ops: newvalue.ops(),
         }
     }
 
@@ -209,7 +209,7 @@ impl ResolvedTable {
         });
         LocalStateChange {
             new_state: self.focus.update(diffapp),
-            new_ops: newvalue.ops,
+            new_ops: newvalue.ops(),
         }
     }
 
@@ -348,7 +348,7 @@ impl ResolvedList {
         let new_state = self.focus.update(diffapp);
         LocalStateChange {
             new_state,
-            new_ops: newvalue.ops,
+            new_ops: newvalue.ops(),
         }
     }
 
@@ -370,7 +370,7 @@ impl ResolvedList {
         });
         LocalStateChange {
             new_state: self.focus.update(diffapp),
-            new_ops: newvalue.ops,
+            new_ops: newvalue.ops(),
         }
     }
 

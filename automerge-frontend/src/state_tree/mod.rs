@@ -1,9 +1,6 @@
 use crate::error;
 use crate::Value;
 use crate::{Path, PathElement};
-/// The state of the frontend is more complicated than just the current resolved
-/// value. We need to tag every value in the state with the OpID that created it.
-/// and maintain paralell trees of conflicting values.
 use automerge_protocol as amp;
 use im::hashmap;
 use std::convert::TryInto;
@@ -29,22 +26,22 @@ trait Register {
     fn default_value(&self) -> Value;
 }
 
-pub enum MutationTarget {
-    Root(RootTarget),
-    Map(MapTarget),
-    Table(TableTarget),
-    List(ListTarget),
-    Text(TextTarget),
-    Character(CharTarget),
-    Counter(CounterTarget),
-    Primitive(PrimitiveTarget),
+pub enum ResolvedPath {
+    Root(ResolvedRoot),
+    Map(ResolvedMap),
+    Table(ResolvedTable),
+    List(ResolvedList),
+    Text(ResolvedText),
+    Character(ResolvedChar),
+    Counter(ResolvedCounter),
+    Primitive(ResolvedPrimitive),
 }
 
-pub struct RootTarget {
+pub struct ResolvedRoot {
     root: StateTree,
 }
 
-impl RootTarget {
+impl ResolvedRoot {
     pub(crate) fn set_key(&self, key: &str, value: &Value) -> LocalStateChange {
         let newvalue = MultiValue::new_from_value(
             amp::ObjectID::Root,
@@ -75,7 +72,7 @@ impl RootTarget {
     }
 }
 
-pub struct CounterTarget {
+pub struct ResolvedCounter {
     current_value: i64,
     multivalue: MultiValue,
     containing_object_id: amp::ObjectID,
@@ -83,7 +80,7 @@ pub struct CounterTarget {
     focus: Box<focus::Focus>,
 }
 
-impl CounterTarget {
+impl ResolvedCounter {
     pub(crate) fn increment(&self, by: i64) -> LocalStateChange {
         let diffapp = DiffApplicationResult::pure(self.multivalue.update_default(
             StateTreeValue::Leaf(amp::ScalarValue::Counter(self.current_value + by)),
@@ -104,13 +101,13 @@ impl CounterTarget {
     }
 }
 
-pub struct MapTarget {
+pub struct ResolvedMap {
     value: StateTreeMap,
     multivalue: MultiValue,
     focus: Box<focus::Focus>,
 }
 
-impl MapTarget {
+impl ResolvedMap {
     pub(crate) fn set_key(&self, key: &str, value: &Value) -> LocalStateChange {
         let newvalue = MultiValue::new_from_value(
             self.value.object_id.clone(),
@@ -156,13 +153,13 @@ impl MapTarget {
     }
 }
 
-pub struct TableTarget {
+pub struct ResolvedTable {
     value: StateTreeTable,
     multivalue: MultiValue,
     focus: Box<focus::Focus>,
 }
 
-impl TableTarget {
+impl ResolvedTable {
     pub(crate) fn set_key(&self, key: &str, value: &Value) -> LocalStateChange {
         let newvalue = MultiValue::new_from_value(
             self.value.object_id.clone(),
@@ -208,13 +205,13 @@ impl TableTarget {
     }
 }
 
-pub struct TextTarget {
+pub struct ResolvedText {
     value: StateTreeText,
     multivalue: MultiValue,
     update: Box<dyn Fn(DiffApplicationResult<MultiValue>) -> StateTree>,
 }
 
-impl TextTarget {
+impl ResolvedText {
     pub(crate) fn insert(&self, index: u32, c: char) -> LocalStateChange {
         let mut new_chars = self.value.chars.clone();
         new_chars.insert(index.try_into().unwrap(), MultiChar::new_from_char(c));
@@ -296,13 +293,13 @@ impl TextTarget {
     }
 }
 
-pub struct ListTarget {
+pub struct ResolvedList {
     value: StateTreeList,
     multivalue: MultiValue,
     focus: Box<focus::Focus>,
 }
 
-impl ListTarget {
+impl ResolvedList {
     pub(crate) fn set(&self, index: u32, v: &Value) -> LocalStateChange {
         let newvalue = MultiValue::new_from_value(
             self.value.object_id.clone(),
@@ -369,67 +366,58 @@ impl ListTarget {
     }
 }
 
-pub struct CharTarget {
-    /*containing_object_id: amp::ObjectID,*/
-/*index: u64,*/
-/*update: Box<dyn Fn(DiffApplicationResult<MultiChar>) -> StateTree>,*/
-/*delete: Box<dyn Fn() -> StateTree>,*/}
-
-impl CharTarget {
-    /*pub(crate) fn set(&self, c: char) -> LocalStateChange {*/
-    /*LocalStateChange {*/
-    /*new_state: (self.update)(DiffApplicationResult::pure(MultiChar::new_from_char(c))),*/
-    /*new_ops: vec![amp::Op {*/
-    /*action: amp::OpType::Set,*/
-    /*obj: self.containing_object_id.to_string(),*/
-    /*key: amp::RequestKey::Num(self.index),*/
-    /*child: None,*/
-    /*value: Some(amp::ScalarValue::Str(c.to_string())),*/
-    /*datatype: None,*/
-    /*insert: false,*/
-    /*}],*/
-    /*}*/
-    /*}*/
+pub struct ResolvedChar {
+    multivalue: MultiValue,
 }
 
-pub struct PrimitiveTarget {
-    /*containing_object_id: amp::ObjectID,*/
-/*key_in_container: PathElement,*/
-/*focus: Box<focus::Focus>,*/}
-
-impl PrimitiveTarget {
-    /*pub(crate) fn set(&self, v: &Value) -> LocalStateChange {*/
-    /*let newvalue = MultiValue::new_from_value(*/
-    /*self.containing_object_id.clone(),*/
-    /*&self.key_in_container,*/
-    /*v,*/
-    /*false,*/
-    /*);*/
-    /*LocalStateChange {*/
-    /*new_state: self.focus.update(newvalue.diffapp()),*/
-    /*new_ops: newvalue.ops,*/
-    /*}*/
-    /*}*/
+pub struct ResolvedPrimitive {
+    multivalue: MultiValue,
 }
 
-pub struct PathResolution {
-    pub containing_object_id: amp::ObjectID,
-    pub object_id: Option<amp::ObjectID>,
-    register: Box<dyn Register>,
-    mutation_target: MutationTarget,
-}
-
-impl PathResolution {
+impl ResolvedPath {
     pub fn default_value(&self) -> Value {
-        self.register.default_value()
+        match self {
+            ResolvedPath::Map(maptarget) => maptarget.multivalue.default_value().unwrap(),
+            ResolvedPath::Root(root) => root.root.value(),
+            ResolvedPath::Table(tabletarget) => tabletarget.multivalue.default_value().unwrap(),
+            ResolvedPath::List(listtarget) => listtarget.multivalue.default_value().unwrap(),
+            ResolvedPath::Text(texttarget) => texttarget.multivalue.default_value().unwrap(),
+            ResolvedPath::Counter(countertarget) => {
+                countertarget.multivalue.default_value().unwrap()
+            }
+            ResolvedPath::Primitive(p) => p.multivalue.default_value().unwrap(),
+            ResolvedPath::Character(ctarget) => ctarget.multivalue.default_value().unwrap(),
+        }
     }
 
     pub fn values(&self) -> std::collections::HashMap<amp::OpID, Value> {
-        self.register.values()
+        match self {
+            ResolvedPath::Map(maptarget) => maptarget.multivalue.values(),
+            ResolvedPath::Root(root) => {
+                let mut result = std::collections::HashMap::new();
+                result.insert(random_op_id(), root.root.value());
+                result
+            }
+            ResolvedPath::Table(tabletarget) => tabletarget.multivalue.values(),
+            ResolvedPath::List(listtarget) => listtarget.multivalue.values(),
+            ResolvedPath::Text(texttarget) => texttarget.multivalue.values(),
+            ResolvedPath::Counter(countertarget) => countertarget.multivalue.values(),
+            ResolvedPath::Primitive(p) => p.multivalue.values(),
+            ResolvedPath::Character(ctarget) => ctarget.multivalue.values(),
+        }
     }
 
-    pub fn mutations(&self) -> &MutationTarget {
-        &self.mutation_target
+    pub fn object_id(&self) -> Option<amp::ObjectID> {
+        match self {
+            ResolvedPath::Map(maptarget) => Some(maptarget.value.object_id.clone()),
+            ResolvedPath::Root(_) => Some(amp::ObjectID::Root),
+            ResolvedPath::Table(tabletarget) => Some(tabletarget.value.object_id.clone()),
+            ResolvedPath::List(listtarget) => Some(listtarget.value.object_id.clone()),
+            ResolvedPath::Text(texttarget) => Some(texttarget.value.object_id.clone()),
+            ResolvedPath::Counter(_) => None,
+            ResolvedPath::Primitive(_) => None,
+            ResolvedPath::Character(_) => None,
+        }
     }
 }
 
@@ -506,19 +494,9 @@ impl StateTree {
         }
     }
 
-    pub(crate) fn resolve_path(&self, path: &Path) -> Option<PathResolution> {
+    pub(crate) fn resolve_path(&self, path: &Path) -> Option<ResolvedPath> {
         if path.is_root() {
-            return Some(PathResolution {
-                containing_object_id: amp::ObjectID::Root,
-                object_id: Some(amp::ObjectID::Root),
-                register: Box::new(MultiValue::new_from_statetree_value(
-                    StateTreeValue::Internal(StateTreeComposite::Map(StateTreeMap {
-                        props: self.root_map.clone(),
-                        object_id: amp::ObjectID::Root,
-                    })),
-                )),
-                mutation_target: MutationTarget::Root(RootTarget { root: self.clone() }),
-            });
+            return Some(ResolvedPath::Root(ResolvedRoot { root: self.clone() }));
         }
         let mut stack = path.clone().elements();
         stack.reverse();
@@ -587,27 +565,13 @@ impl StateTree {
                                     }
                                 }
                                 StateTreeValue::Internal(StateTreeComposite::Text(
-                                    StateTreeText {
-                                        object_id: oid,
-                                        chars,
-                                    },
+                                    StateTreeText { chars, .. },
                                 )) => {
-                                    if let Some(target) = chars.get(i as usize) {
-                                        parent_object_id = oid;
+                                    if chars.get(i as usize).is_some() {
                                         if stack.is_empty() {
-                                            return Some(PathResolution {
-                                                containing_object_id: parent_object_id,
-                                                object_id: None,
-                                                register: Box::new(target.clone()),
-                                                mutation_target: MutationTarget::Character(
-                                                    CharTarget {
-                                                        /*containing_object_id: parent_object_id,*/
-                                                        /*index: i.try_into().unwrap(),*/
-                                                        /*update,*/
-                                                        /*delete,*/
-                                                    },
-                                                ),
-                                            });
+                                            return Some(ResolvedPath::Character(ResolvedChar {
+                                                multivalue: current_obj,
+                                            }));
                                         } else {
                                             return None;
                                         }
@@ -620,52 +584,43 @@ impl StateTree {
                         }
                     };
                 }
-                let target = match current_obj.default_statetree_value().unwrap() {
+                let resolved_path = match current_obj.default_statetree_value().unwrap() {
                     StateTreeValue::Leaf(v) => match v {
-                        amp::ScalarValue::Counter(v) => MutationTarget::Counter(CounterTarget {
-                            containing_object_id: parent_object_id.clone(),
+                        amp::ScalarValue::Counter(v) => ResolvedPath::Counter(ResolvedCounter {
+                            containing_object_id: parent_object_id,
                             key_in_container,
                             current_value: v,
-                            multivalue: current_obj.clone(),
+                            multivalue: current_obj,
                             focus,
                         }),
-                        _ => MutationTarget::Primitive(PrimitiveTarget {
-                            /*containing_object_id: parent_object_id.clone(),*/
-                            /*key_in_container,*/
-                            /*focus,*/
+                        _ => ResolvedPath::Primitive(ResolvedPrimitive {
+                            multivalue: current_obj,
                         }),
                     },
                     StateTreeValue::Internal(composite) => match composite {
-                        StateTreeComposite::Map(m) => MutationTarget::Map(MapTarget {
+                        StateTreeComposite::Map(m) => ResolvedPath::Map(ResolvedMap {
                             value: m,
-                            multivalue: current_obj.clone(),
+                            multivalue: current_obj,
                             focus,
                         }),
-                        StateTreeComposite::Table(t) => MutationTarget::Table(TableTarget {
+                        StateTreeComposite::Table(t) => ResolvedPath::Table(ResolvedTable {
                             value: t,
-                            multivalue: current_obj.clone(),
+                            multivalue: current_obj,
                             focus,
                         }),
-                        StateTreeComposite::List(l) => MutationTarget::List(ListTarget {
+                        StateTreeComposite::List(l) => ResolvedPath::List(ResolvedList {
                             value: l,
-                            multivalue: current_obj.clone(),
+                            multivalue: current_obj,
                             focus,
                         }),
-                        StateTreeComposite::Text(t) => MutationTarget::Text(TextTarget {
-                            multivalue: current_obj.clone(),
+                        StateTreeComposite::Text(t) => ResolvedPath::Text(ResolvedText {
+                            multivalue: current_obj,
                             value: t,
                             update: Box::new(move |d| focus.update(d)),
                         }),
                     },
                 };
-                Some(PathResolution {
-                    containing_object_id: parent_object_id,
-                    object_id: current_obj
-                        .default_statetree_value()
-                        .and_then(|o| o.object_id()),
-                    register: Box::new(current_obj),
-                    mutation_target: target,
-                })
+                Some(resolved_path)
             } else {
                 None
             }
@@ -1273,13 +1228,6 @@ impl StateTreeValue {
         match self {
             StateTreeValue::Leaf(p) => p.into(),
             StateTreeValue::Internal(composite) => composite.value(),
-        }
-    }
-
-    fn object_id(&self) -> Option<amp::ObjectID> {
-        match self {
-            StateTreeValue::Leaf(_) => None,
-            StateTreeValue::Internal(composite) => Some(composite.object_id()),
         }
     }
 }

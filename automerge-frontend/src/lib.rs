@@ -12,7 +12,7 @@ pub use error::{
 pub use mutation::{LocalChange, MutableDocument};
 pub use path::Path;
 use path::PathElement;
-use state_tree::PathResolution;
+use state_tree::ResolvedPath;
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::error::Error;
@@ -132,25 +132,14 @@ impl FrontendState {
     }
 
     fn get_object_id(&self, path: &Path) -> Option<ObjectID> {
-        match self {
-            FrontendState::WaitingForInFlightRequests {
-                optimistically_updated_root_state,
-                ..
-            } => {
-                println!("In flight: {:?}", optimistically_updated_root_state);
-            }
-            FrontendState::Reconciled { root_state, .. } => {
-                println!("Reconciled: {:?}", root_state);
-            }
-        };
-        self.resolve_path(path).and_then(|r| r.object_id)
+        self.resolve_path(path).and_then(|r| r.object_id())
     }
 
     fn get_value(&self, path: &Path) -> Option<Value> {
         self.resolve_path(path).map(|r| r.default_value())
     }
 
-    fn resolve_path(&self, path: &Path) -> Option<PathResolution> {
+    fn resolve_path(&self, path: &Path) -> Option<ResolvedPath> {
         let root = match self {
             FrontendState::WaitingForInFlightRequests {
                 optimistically_updated_root_state,

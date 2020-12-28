@@ -52,6 +52,18 @@ where
         }
     }
 
+    pub(super) fn fallible_and_then<F, G, E>(self, f: F) -> Result<StateTreeChange<G>, E>
+    where
+        F: Fn(T) -> Result<StateTreeChange<G>, E>,
+    {
+        let diff = f(self.value.clone())?;
+        let result = self.with_updates(diff.index_updates.clone());
+        Ok(StateTreeChange {
+            value: diff.value,
+            index_updates: result.index_updates,
+        })
+    }
+
     pub(super) fn with_updates(
         self,
         updates: Option<im::HashMap<amp::ObjectID, StateTreeComposite>>,

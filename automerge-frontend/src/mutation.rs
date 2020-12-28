@@ -150,14 +150,14 @@ impl MutableDocument for MutationTracker {
                                 Err(InvalidChangeRequest::NoSuchPathError { path: change.path })
                             }
                             (PathElement::Index(i), ResolvedPath::List(ref list_target)) => {
-                                self.apply_state_change(list_target.set(*i, value));
+                                self.apply_state_change(list_target.set(*i, value)?);
                                 Ok(())
                             }
                             (PathElement::Index(i), ResolvedPath::Text(ref text)) => match value {
                                 Value::Primitive(amp::ScalarValue::Str(s)) => {
                                     if s.len() == 1 {
                                         self.apply_state_change(
-                                            text.set(*i, s.chars().next().unwrap()),
+                                            text.set(*i, s.chars().next().unwrap())?,
                                         );
                                         Ok(())
                                     } else {

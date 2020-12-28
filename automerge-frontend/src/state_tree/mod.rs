@@ -257,6 +257,149 @@ enum StateTreeValue {
     Composite(StateTreeComposite),
 }
 
+#[derive(Debug, Clone)]
+enum StateTreeComposite {
+    Map(StateTreeMap),
+    Table(StateTreeTable),
+    Text(StateTreeText),
+    List(StateTreeList),
+}
+
+impl StateTreeComposite {
+    fn apply_diff(
+        &self,
+        diff: &amp::Diff,
+    ) -> Result<StateTreeChange<StateTreeComposite>, error::InvalidPatch> {
+        if diff_object_id(diff) != Some(self.object_id()) {
+            return Err(error::InvalidPatch::MismatchingObjectIDs {
+                patch_expected_id: diff_object_id(diff),
+                actual_id: self.object_id(),
+            });
+        };
+        match diff {
+            amp::Diff::Map(amp::MapDiff {
+                obj_type,
+                props: prop_diffs,
+                ..
+            }) => match self {
+                StateTreeComposite::Map(map) => {
+                    if *obj_type != amp::MapType::Map {
+                        Err(error::InvalidPatch::MismatchingObjectType {
+                            object_id: map.object_id.clone(),
+                            patch_expected_type: Some(amp::ObjType::Map(*obj_type)),
+                            actual_type: Some(self.obj_type()),
+                        })
+                    } else {
+                        map.apply_diff(prop_diffs)
+                            .map(|d| d.map(StateTreeComposite::Map))
+                    }
+                }
+                StateTreeComposite::Table(table) => {
+                    if *obj_type != amp::MapType::Table {
+                        Err(error::InvalidPatch::MismatchingObjectType {
+                            object_id: table.object_id.clone(),
+                            patch_expected_type: Some(amp::ObjType::Map(*obj_type)),
+                            actual_type: Some(self.obj_type()),
+                        })
+                    } else {
+                        table
+                            .apply_diff(prop_diffs)
+                            .map(|d| d.map(StateTreeComposite::Table))
+                    }
+                }
+                _ => Err(error::InvalidPatch::MismatchingObjectType {
+                    object_id: self.object_id(),
+                    patch_expected_type: diff_object_type(diff),
+                    actual_type: Some(self.obj_type()),
+                }),
+            },
+            amp::Diff::Seq(amp::SeqDiff {
+                edits,
+                props: new_props,
+                obj_type,
+                ..
+            }) => match self {
+                StateTreeComposite::List(list) => {
+                    if *obj_type != amp::SequenceType::List {
+                        Err(error::InvalidPatch::MismatchingObjectType {
+                            object_id: list.object_id.clone(),
+                            patch_expected_type: Some(amp::ObjType::Sequence(*obj_type)),
+                            actual_type: Some(self.obj_type()),
+                        })
+                    } else {
+                        list.apply_diff(edits, new_props)
+                            .map(|d| d.map(StateTreeComposite::List))
+                    }
+                }
+                StateTreeComposite::Text(text) => {
+                    if *obj_type != amp::SequenceType::Text {
+                        Err(error::InvalidPatch::MismatchingObjectType {
+                            object_id: text.object_id.clone(),
+                            patch_expected_type: Some(amp::ObjType::Sequence(*obj_type)),
+                            actual_type: Some(self.obj_type()),
+                        })
+                    } else {
+                        text.apply_diff(edits, new_props)
+                            .map(|d| d.map(StateTreeComposite::Text))
+                    }
+                }
+                _ => Err(error::InvalidPatch::MismatchingObjectType {
+                    object_id: self.object_id(),
+                    patch_expected_type: diff_object_type(diff),
+                    actual_type: Some(self.obj_type()),
+                }),
+            },
+            amp::Diff::Unchanged(..) => Ok(StateTreeChange::pure(self.clone())),
+            amp::Diff::Value(..) => {
+                panic!("SHould never be called")
+            }
+        }
+    }
+
+    fn obj_type(&self) -> amp::ObjType {
+        match self {
+            Self::Map(..) => amp::ObjType::map(),
+            Self::Table(..) => amp::ObjType::table(),
+            Self::Text(..) => amp::ObjType::text(),
+            Self::List(..) => amp::ObjType::list(),
+        }
+    }
+
+    fn object_id(&self) -> amp::ObjectID {
+        match self {
+            Self::Map(StateTreeMap { object_id, .. }) => object_id.clone(),
+            Self::Table(StateTreeTable { object_id, .. }) => object_id.clone(),
+            Self::Text(StateTreeText { object_id, .. }) => object_id.clone(),
+            Self::List(StateTreeList { object_id, .. }) => object_id.clone(),
+        }
+    }
+
+    fn value(&self) -> Value {
+        match self {
+            Self::Map(StateTreeMap { props, .. }) => Value::Map(
+                props
+                    .iter()
+                    .filter_map(|(k, v)| v.default_value().map(|v| (k.clone(), v)))
+                    .collect(),
+                amp::MapType::Map,
+            ),
+            Self::Table(StateTreeTable { props, .. }) => Value::Map(
+                props
+                    .iter()
+                    .filter_map(|(k, v)| v.default_value().map(|v| (k.clone(), v)))
+                    .collect(),
+                amp::MapType::Table,
+            ),
+            Self::List(StateTreeList {
+                elements: elems, ..
+            }) => Value::Sequence(elems.iter().filter_map(|e| e.default_value()).collect()),
+            Self::Text(StateTreeText { chars, .. }) => {
+                Value::Text(chars.iter().filter_map(|c| c.default_char()).collect())
+            }
+        }
+    }
+}
+
 impl StateTreeValue {
     fn new_from_diff(
         diff: &amp::Diff,
@@ -416,6 +559,38 @@ struct StateTreeText {
 }
 
 impl StateTreeText {
+    fn remove(&self, index: usize) -> StateTreeText {
+        let mut new_chars = self.chars.clone();
+        new_chars.remove(index);
+        StateTreeText {
+            object_id: self.object_id.clone(),
+            chars: new_chars,
+        }
+    }
+
+    fn set(&self, index: usize, value: char) -> Result<StateTreeText, error::MissingIndexError> {
+        if self.chars.len() > index {
+            Ok(StateTreeText {
+                object_id: self.object_id.clone(),
+                chars: self.chars.update(index, MultiChar::new_from_char(value)),
+            })
+        } else {
+            Err(error::MissingIndexError {
+                missing_index: index,
+                size_of_collection: self.chars.len(),
+            })
+        }
+    }
+
+    fn insert(&self, index: usize, value: char) -> StateTreeText {
+        let mut new_chars = self.chars.clone();
+        new_chars.insert(index, MultiChar::new_from_char(value));
+        StateTreeText {
+            object_id: self.object_id.clone(),
+            chars: new_chars,
+        }
+    }
+
     fn apply_diff(
         &self,
         edits: &[amp::DiffEdit],
@@ -471,10 +646,21 @@ impl StateTreeList {
         }
     }
 
-    fn set(&self, index: usize, value: MultiValue) -> StateTreeList {
-        StateTreeList {
-            object_id: self.object_id.clone(),
-            elements: self.elements.update(index, value),
+    fn set(
+        &self,
+        index: usize,
+        value: MultiValue,
+    ) -> Result<StateTreeList, error::MissingIndexError> {
+        if self.elements.len() > index {
+            Ok(StateTreeList {
+                object_id: self.object_id.clone(),
+                elements: self.elements.update(index, value),
+            })
+        } else {
+            Err(error::MissingIndexError {
+                missing_index: index,
+                size_of_collection: self.elements.len(),
+            })
         }
     }
 
@@ -531,149 +717,6 @@ impl StateTreeList {
             StateTreeComposite::List(composite.clone()),
         );
         Ok(StateTreeChange::pure(composite).with_updates(Some(object_index_updates)))
-    }
-}
-
-#[derive(Debug, Clone)]
-enum StateTreeComposite {
-    Map(StateTreeMap),
-    Table(StateTreeTable),
-    Text(StateTreeText),
-    List(StateTreeList),
-}
-
-impl StateTreeComposite {
-    fn apply_diff(
-        &self,
-        diff: &amp::Diff,
-    ) -> Result<StateTreeChange<StateTreeComposite>, error::InvalidPatch> {
-        if diff_object_id(diff) != Some(self.object_id()) {
-            return Err(error::InvalidPatch::MismatchingObjectIDs {
-                patch_expected_id: diff_object_id(diff),
-                actual_id: self.object_id(),
-            });
-        };
-        match diff {
-            amp::Diff::Map(amp::MapDiff {
-                obj_type,
-                props: prop_diffs,
-                ..
-            }) => match self {
-                StateTreeComposite::Map(map) => {
-                    if *obj_type != amp::MapType::Map {
-                        Err(error::InvalidPatch::MismatchingObjectType {
-                            object_id: map.object_id.clone(),
-                            patch_expected_type: Some(amp::ObjType::Map(*obj_type)),
-                            actual_type: Some(self.obj_type()),
-                        })
-                    } else {
-                        map.apply_diff(prop_diffs)
-                            .map(|d| d.map(StateTreeComposite::Map))
-                    }
-                }
-                StateTreeComposite::Table(table) => {
-                    if *obj_type != amp::MapType::Table {
-                        Err(error::InvalidPatch::MismatchingObjectType {
-                            object_id: table.object_id.clone(),
-                            patch_expected_type: Some(amp::ObjType::Map(*obj_type)),
-                            actual_type: Some(self.obj_type()),
-                        })
-                    } else {
-                        table
-                            .apply_diff(prop_diffs)
-                            .map(|d| d.map(StateTreeComposite::Table))
-                    }
-                }
-                _ => Err(error::InvalidPatch::MismatchingObjectType {
-                    object_id: self.object_id(),
-                    patch_expected_type: diff_object_type(diff),
-                    actual_type: Some(self.obj_type()),
-                }),
-            },
-            amp::Diff::Seq(amp::SeqDiff {
-                edits,
-                props: new_props,
-                obj_type,
-                ..
-            }) => match self {
-                StateTreeComposite::List(list) => {
-                    if *obj_type != amp::SequenceType::List {
-                        Err(error::InvalidPatch::MismatchingObjectType {
-                            object_id: list.object_id.clone(),
-                            patch_expected_type: Some(amp::ObjType::Sequence(*obj_type)),
-                            actual_type: Some(self.obj_type()),
-                        })
-                    } else {
-                        list.apply_diff(edits, new_props)
-                            .map(|d| d.map(StateTreeComposite::List))
-                    }
-                }
-                StateTreeComposite::Text(text) => {
-                    if *obj_type != amp::SequenceType::Text {
-                        Err(error::InvalidPatch::MismatchingObjectType {
-                            object_id: text.object_id.clone(),
-                            patch_expected_type: Some(amp::ObjType::Sequence(*obj_type)),
-                            actual_type: Some(self.obj_type()),
-                        })
-                    } else {
-                        text.apply_diff(edits, new_props)
-                            .map(|d| d.map(StateTreeComposite::Text))
-                    }
-                }
-                _ => Err(error::InvalidPatch::MismatchingObjectType {
-                    object_id: self.object_id(),
-                    patch_expected_type: diff_object_type(diff),
-                    actual_type: Some(self.obj_type()),
-                }),
-            },
-            amp::Diff::Unchanged(..) => Ok(StateTreeChange::pure(self.clone())),
-            amp::Diff::Value(..) => {
-                panic!("SHould never be called")
-            }
-        }
-    }
-
-    fn obj_type(&self) -> amp::ObjType {
-        match self {
-            Self::Map(..) => amp::ObjType::map(),
-            Self::Table(..) => amp::ObjType::table(),
-            Self::Text(..) => amp::ObjType::text(),
-            Self::List(..) => amp::ObjType::list(),
-        }
-    }
-
-    fn object_id(&self) -> amp::ObjectID {
-        match self {
-            Self::Map(StateTreeMap { object_id, .. }) => object_id.clone(),
-            Self::Table(StateTreeTable { object_id, .. }) => object_id.clone(),
-            Self::Text(StateTreeText { object_id, .. }) => object_id.clone(),
-            Self::List(StateTreeList { object_id, .. }) => object_id.clone(),
-        }
-    }
-
-    fn value(&self) -> Value {
-        match self {
-            Self::Map(StateTreeMap { props, .. }) => Value::Map(
-                props
-                    .iter()
-                    .filter_map(|(k, v)| v.default_value().map(|v| (k.clone(), v)))
-                    .collect(),
-                amp::MapType::Map,
-            ),
-            Self::Table(StateTreeTable { props, .. }) => Value::Map(
-                props
-                    .iter()
-                    .filter_map(|(k, v)| v.default_value().map(|v| (k.clone(), v)))
-                    .collect(),
-                amp::MapType::Table,
-            ),
-            Self::List(StateTreeList {
-                elements: elems, ..
-            }) => Value::Sequence(elems.iter().filter_map(|e| e.default_value()).collect()),
-            Self::Text(StateTreeText { chars, .. }) => {
-                Value::Text(chars.iter().filter_map(|c| c.default_char()).collect())
-            }
-        }
     }
 }
 

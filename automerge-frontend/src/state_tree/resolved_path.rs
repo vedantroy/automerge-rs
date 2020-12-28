@@ -1,8 +1,9 @@
 use super::focus::Focus;
 use super::{
-    random_op_id, LocalOperationResult, MultiChar, MultiValue, StateTree, StateTreeChange,
-    StateTreeComposite, StateTreeList, StateTreeMap, StateTreeTable, StateTreeText, StateTreeValue,
+    random_op_id, LocalOperationResult, MultiValue, StateTree, StateTreeChange, StateTreeComposite,
+    StateTreeList, StateTreeMap, StateTreeTable, StateTreeText, StateTreeValue,
 };
+use crate::error;
 use crate::path::PathElement;
 use crate::Value;
 use automerge_protocol as amp;
@@ -243,12 +244,7 @@ pub struct ResolvedText {
 
 impl ResolvedText {
     pub(crate) fn insert(&self, index: u32, c: char) -> LocalOperationResult {
-        let mut new_chars = self.value.chars.clone();
-        new_chars.insert(index.try_into().unwrap(), MultiChar::new_from_char(c));
-        let updated = StateTreeComposite::Text(StateTreeText {
-            object_id: self.value.object_id.clone(),
-            chars: new_chars,
-        });
+        let updated = StateTreeComposite::Text(self.value.insert(index.try_into().unwrap(), c));
         let mv = self
             .multivalue
             .update_default(StateTreeValue::Composite(updated.clone()));
@@ -268,20 +264,19 @@ impl ResolvedText {
         }
     }
 
-    pub(crate) fn set(&self, index: u32, c: char) -> LocalOperationResult {
-        let mut new_chars = self.value.chars.clone();
-        new_chars.set(index.try_into().unwrap(), MultiChar::new_from_char(c));
-        let updated = StateTreeComposite::Text(StateTreeText {
-            object_id: self.value.object_id.clone(),
-            chars: new_chars,
-        });
+    pub(crate) fn set(
+        &self,
+        index: u32,
+        c: char,
+    ) -> Result<LocalOperationResult, error::MissingIndexError> {
+        let updated = StateTreeComposite::Text(self.value.set(index.try_into().unwrap(), c)?);
         let mv = self
             .multivalue
             .update_default(StateTreeValue::Composite(updated.clone()));
         let diffapp = StateTreeChange::pure(mv)
             .with_updates(Some(hashmap!(self.value.object_id.clone() => updated)));
         let new_state = (self.update)(diffapp);
-        LocalOperationResult {
+        Ok(LocalOperationResult {
             new_state,
             new_ops: vec![amp::Op {
                 action: amp::OpType::Set,
@@ -292,16 +287,11 @@ impl ResolvedText {
                 datatype: None,
                 insert: false,
             }],
-        }
+        })
     }
 
     pub(crate) fn remove(&self, index: u32) -> LocalOperationResult {
-        let mut new_chars = self.value.chars.clone();
-        new_chars.remove(index.try_into().unwrap());
-        let updated = StateTreeComposite::Text(StateTreeText {
-            object_id: self.value.object_id.clone(),
-            chars: new_chars,
-        });
+        let updated = StateTreeComposite::Text(self.value.remove(index.try_into().unwrap()));
         let mv = self
             .multivalue
             .update_default(StateTreeValue::Composite(updated.clone()));
@@ -330,26 +320,30 @@ pub struct ResolvedList {
 }
 
 impl ResolvedList {
-    pub(crate) fn set(&self, index: u32, v: &Value) -> LocalOperationResult {
+    pub(crate) fn set(
+        &self,
+        index: u32,
+        v: &Value,
+    ) -> Result<LocalOperationResult, error::MissingIndexError> {
         let newvalue = MultiValue::new_from_value(
             self.value.object_id.clone(),
             &PathElement::Index(index),
             v,
             false,
         );
-        let diffapp = newvalue.diffapp().and_then(|v| {
-            let new_value = StateTreeComposite::List(self.value.set(index.try_into().unwrap(), v));
+        let diffapp = newvalue.diffapp().fallible_and_then(|v| {
+            let new_value = StateTreeComposite::List(self.value.set(index.try_into().unwrap(), v)?);
             let mv = self
                 .multivalue
                 .update_default(StateTreeValue::Composite(new_value.clone()));
-            StateTreeChange::pure(mv)
-                .with_updates(Some(hashmap!(self.value.object_id.clone() => new_value)))
-        });
+            Ok(StateTreeChange::pure(mv)
+                .with_updates(Some(hashmap!(self.value.object_id.clone() => new_value))))
+        })?;
         let new_state = self.focus.update(diffapp);
-        LocalOperationResult {
+        Ok(LocalOperationResult {
             new_state,
             new_ops: newvalue.ops(),
-        }
+        })
     }
 
     pub(crate) fn insert(&self, index: u32, v: &Value) -> LocalOperationResult {

@@ -96,4 +96,16 @@ pub enum InvalidChangeRequest {
     InsertNonTextInTextObject { path: Path, object: Value },
     #[error("attmpted to delete root object")]
     CannotDeleteRootObject,
+    #[error("Attempted to access a missing index")]
+    MissingIndexError {
+        #[from]
+        source: MissingIndexError,
+    },
+}
+
+#[derive(Error, Debug, PartialEq)]
+#[error("Attempted to access index {missing_index} in a collection with max index: {size_of_collection}")]
+pub struct MissingIndexError {
+    pub missing_index: usize,
+    pub size_of_collection: usize,
 }

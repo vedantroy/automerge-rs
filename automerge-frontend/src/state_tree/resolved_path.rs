@@ -150,7 +150,7 @@ impl ResolvedMap {
             let new_composite = StateTreeComposite::Map(new_value);
             let new_mv = self
                 .multivalue
-                .update_default(StateTreeValue::Internal(new_composite.clone()));
+                .update_default(StateTreeValue::Composite(new_composite.clone()));
             DiffApplicationResult::pure(new_mv).with_updates(Some(
                 im::HashMap::new().update(self.value.object_id.clone(), new_composite),
             ))
@@ -166,7 +166,7 @@ impl ResolvedMap {
         let new_composite = StateTreeComposite::Map(new_value);
         let new_mv = self
             .multivalue
-            .update_default(StateTreeValue::Internal(new_composite));
+            .update_default(StateTreeValue::Composite(new_composite));
         let diffapp = DiffApplicationResult::pure(new_mv);
         LocalStateChange {
             new_state: self.focus.update(diffapp),
@@ -202,7 +202,7 @@ impl ResolvedTable {
             let new_composite = StateTreeComposite::Table(new_value);
             let new_mv = self
                 .multivalue
-                .update_default(StateTreeValue::Internal(new_composite.clone()));
+                .update_default(StateTreeValue::Composite(new_composite.clone()));
             DiffApplicationResult::pure(new_mv).with_updates(Some(
                 hashmap!(self.value.object_id.clone() => new_composite),
             ))
@@ -218,7 +218,7 @@ impl ResolvedTable {
         let new_composite = StateTreeComposite::Table(new_value);
         let new_mv = self
             .multivalue
-            .update_default(StateTreeValue::Internal(new_composite));
+            .update_default(StateTreeValue::Composite(new_composite));
         let diffapp = DiffApplicationResult::pure(new_mv);
         LocalStateChange {
             new_state: self.focus.update(diffapp),
@@ -251,7 +251,7 @@ impl ResolvedText {
         });
         let mv = self
             .multivalue
-            .update_default(StateTreeValue::Internal(updated.clone()));
+            .update_default(StateTreeValue::Composite(updated.clone()));
         let diffapp = DiffApplicationResult::pure(mv)
             .with_updates(Some(hashmap!(self.value.object_id.clone() => updated)));
         LocalStateChange {
@@ -277,7 +277,7 @@ impl ResolvedText {
         });
         let mv = self
             .multivalue
-            .update_default(StateTreeValue::Internal(updated.clone()));
+            .update_default(StateTreeValue::Composite(updated.clone()));
         let diffapp = DiffApplicationResult::pure(mv)
             .with_updates(Some(hashmap!(self.value.object_id.clone() => updated)));
         let new_state = (self.update)(diffapp);
@@ -304,7 +304,7 @@ impl ResolvedText {
         });
         let mv = self
             .multivalue
-            .update_default(StateTreeValue::Internal(updated.clone()));
+            .update_default(StateTreeValue::Composite(updated.clone()));
         let diffapp = DiffApplicationResult::pure(mv)
             .with_updates(Some(hashmap!(self.value.object_id.clone() => updated)));
         let new_state = (self.update)(diffapp);
@@ -341,7 +341,7 @@ impl ResolvedList {
             let new_value = StateTreeComposite::List(self.value.set(index.try_into().unwrap(), v));
             let mv = self
                 .multivalue
-                .update_default(StateTreeValue::Internal(new_value.clone()));
+                .update_default(StateTreeValue::Composite(new_value.clone()));
             DiffApplicationResult::pure(mv)
                 .with_updates(Some(hashmap!(self.value.object_id.clone() => new_value)))
         });
@@ -364,7 +364,7 @@ impl ResolvedList {
                 StateTreeComposite::List(self.value.insert(index.try_into().unwrap(), v));
             let mv = self
                 .multivalue
-                .update_default(StateTreeValue::Internal(new_value.clone()));
+                .update_default(StateTreeValue::Composite(new_value.clone()));
             DiffApplicationResult::pure(mv)
                 .with_updates(Some(hashmap!(self.value.object_id.clone() => new_value)))
         });
@@ -378,7 +378,7 @@ impl ResolvedList {
         let new_value = StateTreeComposite::List(self.value.remove(index.try_into().unwrap()));
         let mv = self
             .multivalue
-            .update_default(StateTreeValue::Internal(new_value.clone()));
+            .update_default(StateTreeValue::Composite(new_value.clone()));
         let diffapp = DiffApplicationResult::pure(mv)
             .with_updates(Some(hashmap!(self.value.object_id.clone() => new_value)));
         LocalStateChange {

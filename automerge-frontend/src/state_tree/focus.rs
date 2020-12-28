@@ -104,7 +104,7 @@ impl MapFocus {
             });
             DiffApplicationResult::pure(
                 self.multivalue
-                    .update_default(StateTreeValue::Internal(updated.clone())),
+                    .update_default(StateTreeValue::Composite(updated.clone())),
             )
             .with_updates(Some(hashmap!(self.map.object_id.clone() => updated)))
         });
@@ -129,7 +129,7 @@ impl TableFocus {
             });
             DiffApplicationResult::pure(
                 self.multivalue
-                    .update_default(StateTreeValue::Internal(updated.clone())),
+                    .update_default(StateTreeValue::Composite(updated.clone())),
             )
             .with_updates(Some(hashmap!(self.table.object_id.clone() => updated)))
         });
@@ -154,7 +154,7 @@ impl ListFocus {
             });
             DiffApplicationResult::pure(
                 self.multivalue
-                    .update_default(StateTreeValue::Internal(updated.clone())),
+                    .update_default(StateTreeValue::Composite(updated.clone())),
             )
             .with_updates(Some(hashmap!(self.list.object_id.clone() => updated)))
         });

@@ -24,13 +24,6 @@ impl MultiValue {
         MultiValue(hashmap! {random_op_id() => value})
     }
 
-    pub(super) fn new_from_diff(
-        diff: &std::collections::HashMap<amp::OpID, amp::Diff>,
-    ) -> Result<DiffApplicationResult<MultiValue>, error::InvalidPatch> {
-        let result = MultiValue::new();
-        result.apply_diff(diff)
-    }
-
     pub(super) fn new_from_value(
         parent_id: amp::ObjectID,
         key: &PathElement,
@@ -66,7 +59,7 @@ impl MultiValue {
                         })
                     })
                     .map(|map| {
-                        MultiValue::new_from_statetree_value(StateTreeValue::Internal(
+                        MultiValue::new_from_statetree_value(StateTreeValue::Composite(
                             StateTreeComposite::Map(StateTreeMap {
                                 object_id: map_id.clone(),
                                 props: map,
@@ -102,7 +95,7 @@ impl MultiValue {
                         })
                     })
                     .map(|table| {
-                        MultiValue::new_from_statetree_value(StateTreeValue::Internal(
+                        MultiValue::new_from_statetree_value(StateTreeValue::Composite(
                             StateTreeComposite::Table(StateTreeTable {
                                 object_id: table_id.clone(),
                                 props: table,
@@ -143,7 +136,7 @@ impl MultiValue {
                     .map(|elems| {
                         MultiValue(im::HashMap::new().update(
                             random_op_id(),
-                            StateTreeValue::Internal(StateTreeComposite::List(StateTreeList {
+                            StateTreeValue::Composite(StateTreeComposite::List(StateTreeList {
                                 object_id: list_id.clone(),
                                 elements: elems,
                             })),
@@ -188,7 +181,7 @@ impl MultiValue {
                         })
                     })
                     .map(|newchars| {
-                        MultiValue::new_from_statetree_value(StateTreeValue::Internal(
+                        MultiValue::new_from_statetree_value(StateTreeValue::Composite(
                             StateTreeComposite::Text(StateTreeText {
                                 object_id: text_id.clone(),
                                 chars: newchars,
@@ -220,9 +213,9 @@ impl MultiValue {
             let application_result = if let Some(existing_value) = self.0.get(opid) {
                 match existing_value {
                     StateTreeValue::Leaf(_) => StateTreeValue::new_from_diff(subdiff),
-                    StateTreeValue::Internal(composite) => {
-                        Ok(composite.apply_diff(subdiff)?.map(StateTreeValue::Internal))
-                    }
+                    StateTreeValue::Composite(composite) => Ok(composite
+                        .apply_diff(subdiff)?
+                        .map(StateTreeValue::Composite)),
                 }
             } else {
                 StateTreeValue::new_from_diff(subdiff)

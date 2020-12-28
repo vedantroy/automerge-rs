@@ -72,7 +72,7 @@ impl StateTree {
             StateTreeComposite::Map(StateTreeMap { props: values, .. }) => {
                 let new_object_index = match application_result.index_updates() {
                     None => self.object_index.clone(),
-                    Some(updates) => updates.union(self.object_index.clone()),
+                    Some(updates) => updates.clone().union(self.object_index.clone()),
                 };
                 Ok(StateTree {
                     root_map: values.clone(),
@@ -83,9 +83,9 @@ impl StateTree {
         }
     }
 
-    fn update(&self, k: String, diffapp: DiffApplicationResult<MultiValue>) -> StateTree {
+    fn update(&self, k: String, diffapp: StateTreeChange<MultiValue>) -> StateTree {
         let new_index = match diffapp.index_updates() {
-            Some(u) => u.union(self.object_index.clone()),
+            Some(u) => u.clone().union(self.object_index.clone()),
             None => self.object_index.clone(),
         };
         StateTree {
@@ -247,58 +247,78 @@ impl StateTree {
     }
 }
 
-/// Applying a diff returns two things
-/// - The updated object T (either a StateTreeComposite or a [MultiValue])
-/// - The updates to the object ID index
+/// Represents a change to the state tree. This is used to represent values which have changed
+/// (the type T usually ends up being either a MultiValue or a StateTreeComposite) along with
+/// changes that need to be made to indexes maintained by the state tree (the object id -> object
+/// value index for example).
 #[derive(Clone)]
-pub struct DiffApplicationResult<T>((T, Option<im::HashMap<amp::ObjectID, StateTreeComposite>>));
+pub struct StateTreeChange<T> {
+    value: T,
+    index_updates: Option<im::HashMap<amp::ObjectID, StateTreeComposite>>,
+}
 
-impl<T> DiffApplicationResult<T>
+impl<T> StateTreeChange<T>
 where
     T: Clone,
 {
-    fn pure(value: T) -> DiffApplicationResult<T> {
-        DiffApplicationResult((value, None))
+    fn pure(value: T) -> StateTreeChange<T> {
+        StateTreeChange {
+            value,
+            index_updates: None,
+        }
     }
 
     fn value(&self) -> &T {
-        &self.0 .0
+        &self.value
     }
 
-    fn index_updates(&self) -> Option<im::HashMap<amp::ObjectID, StateTreeComposite>> {
-        self.0 .1.clone()
+    fn index_updates(&self) -> Option<&im::HashMap<amp::ObjectID, StateTreeComposite>> {
+        self.index_updates.as_ref()
     }
 
-    fn map<F, G>(self, f: F) -> DiffApplicationResult<G>
+    fn map<F, G>(self, f: F) -> StateTreeChange<G>
     where
         F: Fn(T) -> G,
     {
-        DiffApplicationResult((f(self.0 .0), self.0 .1))
+        StateTreeChange {
+            value: f(self.value),
+            index_updates: self.index_updates,
+        }
     }
 
-    fn and_then<F, G>(self, f: F) -> DiffApplicationResult<G>
+    fn and_then<F, G>(self, f: F) -> StateTreeChange<G>
     where
-        F: Fn(T) -> DiffApplicationResult<G>,
-        G: Clone,
+        F: Fn(T) -> StateTreeChange<G>,
     {
-        let diff = f(self.0 .0.clone());
-        self.with_updates(diff.0 .1.clone())
-            .map(|_| diff.0 .0.clone())
+        let diff = f(self.value.clone());
+        let result = self.with_updates(diff.index_updates.clone());
+        StateTreeChange {
+            value: diff.value,
+            index_updates: result.index_updates,
+        }
     }
 
     fn with_updates(
         self,
         updates: Option<im::HashMap<amp::ObjectID, StateTreeComposite>>,
-    ) -> DiffApplicationResult<T> {
-        match (updates, self.0 .1) {
-            (Some(updates), Some(existing_updates)) => {
-                DiffApplicationResult((self.0 .0, Some(updates.union(existing_updates))))
-            }
-            (Some(updates), None) => DiffApplicationResult((self.0 .0, Some(updates))),
-            (None, Some(existing_updates)) => {
-                DiffApplicationResult((self.0 .0, Some(existing_updates)))
-            }
-            (None, None) => DiffApplicationResult((self.0 .0, None)),
+    ) -> StateTreeChange<T> {
+        match (updates, self.index_updates) {
+            (Some(updates), Some(existing_updates)) => StateTreeChange {
+                value: self.value,
+                index_updates: Some(updates.union(existing_updates)),
+            },
+            (Some(updates), None) => StateTreeChange {
+                value: self.value,
+                index_updates: Some(updates),
+            },
+            (None, Some(existing_updates)) => StateTreeChange {
+                value: self.value,
+                index_updates: Some(existing_updates),
+            },
+            (None, None) => StateTreeChange {
+                value: self.value,
+                index_updates: None,
+            },
         }
     }
 }
@@ -314,9 +334,9 @@ enum StateTreeValue {
 impl StateTreeValue {
     fn new_from_diff(
         diff: &amp::Diff,
-    ) -> Result<DiffApplicationResult<StateTreeValue>, error::InvalidPatch> {
+    ) -> Result<StateTreeChange<StateTreeValue>, error::InvalidPatch> {
         match diff {
-            amp::Diff::Value(v) => Ok(DiffApplicationResult::pure(StateTreeValue::Leaf(v.clone()))),
+            amp::Diff::Value(v) => Ok(StateTreeChange::pure(StateTreeValue::Leaf(v.clone()))),
             amp::Diff::Map(amp::MapDiff {
                 object_id,
                 obj_type,
@@ -385,7 +405,7 @@ impl StateTreeMap {
     fn apply_diff(
         &self,
         prop_diffs: &HashMap<String, HashMap<amp::OpID, amp::Diff>>,
-    ) -> Result<DiffApplicationResult<StateTreeMap>, error::InvalidPatch> {
+    ) -> Result<StateTreeChange<StateTreeMap>, error::InvalidPatch> {
         let mut new_props = self.props.clone();
         let mut object_index_updates = im::HashMap::new();
         for (prop, prop_diff) in prop_diffs.iter() {
@@ -395,7 +415,7 @@ impl StateTreeMap {
                 let node = new_props.get(prop).cloned().unwrap_or_else(MultiValue::new);
                 let node_result = node.apply_diff(prop_diff)?;
                 if let Some(updates) = node_result.index_updates() {
-                    object_index_updates = updates.union(object_index_updates);
+                    object_index_updates = updates.clone().union(object_index_updates);
                 }
                 new_props = new_props.update(prop.clone(), node_result.value().clone())
             }
@@ -408,7 +428,7 @@ impl StateTreeMap {
             self.object_id.clone(),
             StateTreeComposite::Map(new_map.clone()),
         );
-        Ok(DiffApplicationResult::pure(new_map).with_updates(Some(object_index_updates)))
+        Ok(StateTreeChange::pure(new_map).with_updates(Some(object_index_updates)))
     }
 }
 
@@ -436,7 +456,7 @@ impl StateTreeTable {
     fn apply_diff(
         &self,
         prop_diffs: &HashMap<String, HashMap<amp::OpID, amp::Diff>>,
-    ) -> Result<DiffApplicationResult<StateTreeTable>, error::InvalidPatch> {
+    ) -> Result<StateTreeChange<StateTreeTable>, error::InvalidPatch> {
         let mut new_props = self.props.clone();
         let mut object_index_updates = im::HashMap::new();
         for (prop, prop_diff) in prop_diffs.iter() {
@@ -446,7 +466,7 @@ impl StateTreeTable {
                 let node = new_props.get(prop).cloned().unwrap_or_else(MultiValue::new);
                 let node_result = node.apply_diff(prop_diff)?;
                 if let Some(updates) = node_result.index_updates() {
-                    object_index_updates = updates.union(object_index_updates);
+                    object_index_updates = updates.clone().union(object_index_updates);
                 }
                 new_props = new_props.update(prop.clone(), node_result.value().clone())
             }
@@ -459,7 +479,7 @@ impl StateTreeTable {
             self.object_id.clone(),
             StateTreeComposite::Table(new_table.clone()),
         );
-        Ok(DiffApplicationResult::pure(new_table).with_updates(Some(object_index_updates)))
+        Ok(StateTreeChange::pure(new_table).with_updates(Some(object_index_updates)))
     }
 }
 
@@ -474,7 +494,7 @@ impl StateTreeText {
         &self,
         edits: &[amp::DiffEdit],
         props: &HashMap<usize, HashMap<amp::OpID, amp::Diff>>,
-    ) -> Result<DiffApplicationResult<StateTreeText>, error::InvalidPatch> {
+    ) -> Result<StateTreeChange<StateTreeText>, error::InvalidPatch> {
         let mut new_chars = self.chars.clone();
         for edit in edits.iter() {
             match edit {
@@ -505,7 +525,7 @@ impl StateTreeText {
             self.object_id.clone(),
             StateTreeComposite::Text(text.clone()),
         );
-        Ok(DiffApplicationResult::pure(text).with_updates(Some(object_index_updates)))
+        Ok(StateTreeChange::pure(text).with_updates(Some(object_index_updates)))
     }
 }
 
@@ -545,7 +565,7 @@ impl StateTreeList {
         &self,
         edits: &[amp::DiffEdit],
         new_props: &HashMap<usize, HashMap<amp::OpID, amp::Diff>>,
-    ) -> Result<DiffApplicationResult<StateTreeList>, error::InvalidPatch> {
+    ) -> Result<StateTreeChange<StateTreeList>, error::InvalidPatch> {
         let mut new_elements = self.elements.clone();
         for edit in edits.iter() {
             match edit {
@@ -567,7 +587,7 @@ impl StateTreeList {
                 let node_result = node.apply_diff(prop_diff)?;
                 new_elements = new_elements.update(*index, node_result.value().clone());
                 if let Some(update) = node_result.index_updates() {
-                    object_index_updates = update.union(object_index_updates);
+                    object_index_updates = update.clone().union(object_index_updates);
                 }
             } else {
                 return Err(error::InvalidPatch::InvalidIndex {
@@ -584,7 +604,7 @@ impl StateTreeList {
             self.object_id.clone(),
             StateTreeComposite::List(composite.clone()),
         );
-        Ok(DiffApplicationResult::pure(composite).with_updates(Some(object_index_updates)))
+        Ok(StateTreeChange::pure(composite).with_updates(Some(object_index_updates)))
     }
 }
 
@@ -600,7 +620,7 @@ impl StateTreeComposite {
     fn apply_diff(
         &self,
         diff: &amp::Diff,
-    ) -> Result<DiffApplicationResult<StateTreeComposite>, error::InvalidPatch> {
+    ) -> Result<StateTreeChange<StateTreeComposite>, error::InvalidPatch> {
         if diff_object_id(diff) != Some(self.object_id()) {
             return Err(error::InvalidPatch::MismatchingObjectIDs {
                 patch_expected_id: diff_object_id(diff),
@@ -680,7 +700,7 @@ impl StateTreeComposite {
                     actual_type: Some(self.obj_type()),
                 }),
             },
-            amp::Diff::Unchanged(..) => Ok(DiffApplicationResult::pure(self.clone())),
+            amp::Diff::Unchanged(..) => Ok(StateTreeChange::pure(self.clone())),
             amp::Diff::Value(..) => {
                 panic!("SHould never be called")
             }

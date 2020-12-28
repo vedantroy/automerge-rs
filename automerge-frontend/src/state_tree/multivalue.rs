@@ -2,7 +2,7 @@ use automerge_protocol as amp;
 use im::hashmap;
 
 use super::{
-    new_object_id, random_op_id, value_to_datatype, DiffApplicationResult, StateTreeComposite,
+    new_object_id, random_op_id, value_to_datatype, StateTreeChange, StateTreeComposite,
     StateTreeList, StateTreeMap, StateTreeTable, StateTreeText, StateTreeValue,
 };
 use crate::error;
@@ -207,8 +207,8 @@ impl MultiValue {
     pub(super) fn apply_diff(
         &self,
         diff: &std::collections::HashMap<amp::OpID, amp::Diff>,
-    ) -> Result<DiffApplicationResult<MultiValue>, error::InvalidPatch> {
-        let mut result = DiffApplicationResult::pure(self.0.clone());
+    ) -> Result<StateTreeChange<MultiValue>, error::InvalidPatch> {
+        let mut result = StateTreeChange::pure(self.0.clone());
         for (opid, subdiff) in diff.iter() {
             let application_result = if let Some(existing_value) = self.0.get(opid) {
                 match existing_value {
@@ -222,7 +222,7 @@ impl MultiValue {
             }?;
             result = result
                 .map(|u| u.update(opid.clone(), application_result.value().clone()))
-                .with_updates(application_result.index_updates());
+                .with_updates(application_result.index_updates().cloned());
         }
         Ok(result.map(MultiValue))
     }
@@ -271,12 +271,11 @@ pub(super) struct NewValue<T> {
 }
 
 impl<T> NewValue<T> {
-    pub(super) fn diffapp(&self) -> DiffApplicationResult<T>
+    pub(super) fn diffapp(&self) -> StateTreeChange<T>
     where
         T: Clone,
     {
-        DiffApplicationResult::pure(self.value.clone())
-            .with_updates(Some(self.index_updates.clone()))
+        StateTreeChange::pure(self.value.clone()).with_updates(Some(self.index_updates.clone()))
     }
 
     pub(super) fn ops(self) -> Vec<amp::Op> {

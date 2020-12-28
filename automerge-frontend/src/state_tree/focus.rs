@@ -1,5 +1,5 @@
 use super::{
-    DiffApplicationResult, MultiValue, StateTree, StateTreeComposite, StateTreeList, StateTreeMap,
+    MultiValue, StateTree, StateTreeChange, StateTreeComposite, StateTreeList, StateTreeMap,
     StateTreeTable, StateTreeValue,
 };
 use im::hashmap;
@@ -8,7 +8,7 @@ use im::hashmap;
 pub(crate) struct Focus(FocusInner);
 
 impl Focus {
-    pub(super) fn update(&self, diffapp: DiffApplicationResult<MultiValue>) -> StateTree {
+    pub(super) fn update(&self, diffapp: StateTreeChange<MultiValue>) -> StateTree {
         match &self.0 {
             FocusInner::Root(root) => root.update(diffapp),
             FocusInner::Map(mapfocus) => mapfocus.update(diffapp),
@@ -82,7 +82,7 @@ struct RootFocus {
 }
 
 impl RootFocus {
-    fn update(&self, diffapp: DiffApplicationResult<MultiValue>) -> StateTree {
+    fn update(&self, diffapp: StateTreeChange<MultiValue>) -> StateTree {
         self.root.update(self.key.clone(), diffapp)
     }
 }
@@ -96,13 +96,13 @@ struct MapFocus {
 }
 
 impl MapFocus {
-    fn update(&self, diffapp: DiffApplicationResult<MultiValue>) -> StateTree {
+    fn update(&self, diffapp: StateTreeChange<MultiValue>) -> StateTree {
         let new_diffapp = diffapp.and_then(|v| {
             let updated = StateTreeComposite::Map(StateTreeMap {
                 object_id: self.map.object_id.clone(),
                 props: self.map.props.update(self.key.clone(), v),
             });
-            DiffApplicationResult::pure(
+            StateTreeChange::pure(
                 self.multivalue
                     .update_default(StateTreeValue::Composite(updated.clone())),
             )
@@ -121,13 +121,13 @@ struct TableFocus {
 }
 
 impl TableFocus {
-    fn update(&self, diffapp: DiffApplicationResult<MultiValue>) -> StateTree {
+    fn update(&self, diffapp: StateTreeChange<MultiValue>) -> StateTree {
         let new_diffapp = diffapp.and_then(|v| {
             let updated = StateTreeComposite::Table(StateTreeTable {
                 object_id: self.table.object_id.clone(),
                 props: self.table.props.update(self.key.clone(), v),
             });
-            DiffApplicationResult::pure(
+            StateTreeChange::pure(
                 self.multivalue
                     .update_default(StateTreeValue::Composite(updated.clone())),
             )
@@ -146,13 +146,13 @@ struct ListFocus {
 }
 
 impl ListFocus {
-    fn update(&self, diffapp: DiffApplicationResult<MultiValue>) -> StateTree {
+    fn update(&self, diffapp: StateTreeChange<MultiValue>) -> StateTree {
         let new_diffapp = diffapp.and_then(|v| {
             let updated = StateTreeComposite::List(StateTreeList {
                 object_id: self.list.object_id.clone(),
                 elements: self.list.elements.update(self.index, v),
             });
-            DiffApplicationResult::pure(
+            StateTreeChange::pure(
                 self.multivalue
                     .update_default(StateTreeValue::Composite(updated.clone())),
             )

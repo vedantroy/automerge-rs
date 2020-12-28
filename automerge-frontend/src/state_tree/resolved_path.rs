@@ -1,6 +1,6 @@
 use super::focus::Focus;
 use super::{
-    random_op_id, DiffApplicationResult, LocalOperationResult, MultiChar, MultiValue, StateTree,
+    random_op_id, LocalOperationResult, MultiChar, MultiValue, StateTree, StateTreeChange,
     StateTreeComposite, StateTreeList, StateTreeMap, StateTreeTable, StateTreeText, StateTreeValue,
 };
 use crate::path::PathElement;
@@ -112,9 +112,9 @@ pub struct ResolvedCounter {
 
 impl ResolvedCounter {
     pub(crate) fn increment(&self, by: i64) -> LocalOperationResult {
-        let diffapp = DiffApplicationResult::pure(self.multivalue.update_default(
-            StateTreeValue::Leaf(amp::ScalarValue::Counter(self.current_value + by)),
-        ));
+        let diffapp = StateTreeChange::pure(self.multivalue.update_default(StateTreeValue::Leaf(
+            amp::ScalarValue::Counter(self.current_value + by),
+        )));
         let new_state = self.focus.update(diffapp);
         LocalOperationResult {
             new_state,
@@ -151,7 +151,7 @@ impl ResolvedMap {
             let new_mv = self
                 .multivalue
                 .update_default(StateTreeValue::Composite(new_composite.clone()));
-            DiffApplicationResult::pure(new_mv).with_updates(Some(
+            StateTreeChange::pure(new_mv).with_updates(Some(
                 im::HashMap::new().update(self.value.object_id.clone(), new_composite),
             ))
         });
@@ -167,7 +167,7 @@ impl ResolvedMap {
         let new_mv = self
             .multivalue
             .update_default(StateTreeValue::Composite(new_composite));
-        let diffapp = DiffApplicationResult::pure(new_mv);
+        let diffapp = StateTreeChange::pure(new_mv);
         LocalOperationResult {
             new_state: self.focus.update(diffapp),
             new_ops: vec![amp::Op {
@@ -203,7 +203,7 @@ impl ResolvedTable {
             let new_mv = self
                 .multivalue
                 .update_default(StateTreeValue::Composite(new_composite.clone()));
-            DiffApplicationResult::pure(new_mv).with_updates(Some(
+            StateTreeChange::pure(new_mv).with_updates(Some(
                 hashmap!(self.value.object_id.clone() => new_composite),
             ))
         });
@@ -219,7 +219,7 @@ impl ResolvedTable {
         let new_mv = self
             .multivalue
             .update_default(StateTreeValue::Composite(new_composite));
-        let diffapp = DiffApplicationResult::pure(new_mv);
+        let diffapp = StateTreeChange::pure(new_mv);
         LocalOperationResult {
             new_state: self.focus.update(diffapp),
             new_ops: vec![amp::Op {
@@ -238,7 +238,7 @@ impl ResolvedTable {
 pub struct ResolvedText {
     pub(super) value: StateTreeText,
     pub(super) multivalue: MultiValue,
-    pub(super) update: Box<dyn Fn(DiffApplicationResult<MultiValue>) -> StateTree>,
+    pub(super) update: Box<dyn Fn(StateTreeChange<MultiValue>) -> StateTree>,
 }
 
 impl ResolvedText {
@@ -252,7 +252,7 @@ impl ResolvedText {
         let mv = self
             .multivalue
             .update_default(StateTreeValue::Composite(updated.clone()));
-        let diffapp = DiffApplicationResult::pure(mv)
+        let diffapp = StateTreeChange::pure(mv)
             .with_updates(Some(hashmap!(self.value.object_id.clone() => updated)));
         LocalOperationResult {
             new_state: (self.update)(diffapp),
@@ -278,7 +278,7 @@ impl ResolvedText {
         let mv = self
             .multivalue
             .update_default(StateTreeValue::Composite(updated.clone()));
-        let diffapp = DiffApplicationResult::pure(mv)
+        let diffapp = StateTreeChange::pure(mv)
             .with_updates(Some(hashmap!(self.value.object_id.clone() => updated)));
         let new_state = (self.update)(diffapp);
         LocalOperationResult {
@@ -305,7 +305,7 @@ impl ResolvedText {
         let mv = self
             .multivalue
             .update_default(StateTreeValue::Composite(updated.clone()));
-        let diffapp = DiffApplicationResult::pure(mv)
+        let diffapp = StateTreeChange::pure(mv)
             .with_updates(Some(hashmap!(self.value.object_id.clone() => updated)));
         let new_state = (self.update)(diffapp);
         LocalOperationResult {
@@ -342,7 +342,7 @@ impl ResolvedList {
             let mv = self
                 .multivalue
                 .update_default(StateTreeValue::Composite(new_value.clone()));
-            DiffApplicationResult::pure(mv)
+            StateTreeChange::pure(mv)
                 .with_updates(Some(hashmap!(self.value.object_id.clone() => new_value)))
         });
         let new_state = self.focus.update(diffapp);
@@ -365,7 +365,7 @@ impl ResolvedList {
             let mv = self
                 .multivalue
                 .update_default(StateTreeValue::Composite(new_value.clone()));
-            DiffApplicationResult::pure(mv)
+            StateTreeChange::pure(mv)
                 .with_updates(Some(hashmap!(self.value.object_id.clone() => new_value)))
         });
         LocalOperationResult {
@@ -379,7 +379,7 @@ impl ResolvedList {
         let mv = self
             .multivalue
             .update_default(StateTreeValue::Composite(new_value.clone()));
-        let diffapp = DiffApplicationResult::pure(mv)
+        let diffapp = StateTreeChange::pure(mv)
             .with_updates(Some(hashmap!(self.value.object_id.clone() => new_value)));
         LocalOperationResult {
             new_state: self.focus.update(diffapp),

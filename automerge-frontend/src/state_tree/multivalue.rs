@@ -13,15 +13,22 @@ use std::convert::TryInto;
 /// A set of conflicting values for the same key, indexed by OpID
 // TODO make the type system aware that this always has at least one value
 #[derive(Debug, Clone)]
-pub(super) struct MultiValue(im::HashMap<amp::OpID, StateTreeValue>);
+pub(super) struct MultiValue{
+    conflicts: im::HashMap<amp::OpID, StateTreeValue>
+}
+
 
 impl MultiValue {
     pub(super) fn new() -> MultiValue {
-        MultiValue(im::HashMap::new())
+        MultiValue{
+            conflicts: im::HashMap::new()
+        }
     }
 
     pub(super) fn new_from_statetree_value(value: StateTreeValue) -> MultiValue {
-        MultiValue(hashmap! {random_op_id() => value})
+        MultiValue{
+            conflicts: hashmap! {random_op_id() => value}
+        }
     }
 
     pub(super) fn new_from_value(
@@ -134,13 +141,14 @@ impl MultiValue {
                         })
                     })
                     .map(|elems| {
-                        MultiValue(im::HashMap::new().update(
-                            random_op_id(),
-                            StateTreeValue::Composite(StateTreeComposite::List(StateTreeList {
-                                object_id: list_id.clone(),
-                                elements: elems,
-                            })),
-                        ))
+                        MultiValue{
+                            conflicts: hashmap!{
+                                random_op_id() => StateTreeValue::Composite(StateTreeComposite::List(StateTreeList {
+                                    object_id: list_id.clone(),
+                                    elements: elems,
+                                })),
+                            }
+                        }
                     })
             }
             Value::Text(chars) => {
@@ -208,9 +216,9 @@ impl MultiValue {
         &self,
         diff: &std::collections::HashMap<amp::OpID, amp::Diff>,
     ) -> Result<StateTreeChange<MultiValue>, error::InvalidPatch> {
-        let mut result = StateTreeChange::pure(self.0.clone());
+        let mut result = StateTreeChange::pure(self.conflicts.clone());
         for (opid, subdiff) in diff.iter() {
-            let application_result = if let Some(existing_value) = self.0.get(opid) {
+            let application_result = if let Some(existing_value) = self.conflicts.get(opid) {
                 match existing_value {
                     StateTreeValue::Leaf(_) => StateTreeValue::new_from_diff(subdiff),
                     StateTreeValue::Composite(composite) => Ok(composite
@@ -224,11 +232,11 @@ impl MultiValue {
                 .map(|u| u.update(opid.clone(), application_result.value().clone()))
                 .with_updates(application_result.index_updates().cloned());
         }
-        Ok(result.map(MultiValue))
+        Ok(result.map(|conflicts| MultiValue{conflicts}))
     }
 
     pub(super) fn default_statetree_value(&self) -> Option<StateTreeValue> {
-        self.0.get(&self.default_opid()).cloned()
+        self.conflicts.get(&self.default_opid()).cloned()
     }
 
     pub(super) fn default_value(&self) -> Option<Value> {
@@ -236,24 +244,26 @@ impl MultiValue {
     }
 
     pub(super) fn default_opid(&self) -> amp::OpID {
-        let mut opids: Vec<&amp::OpID> = self.0.keys().collect();
+        let mut opids: Vec<&amp::OpID> = self.conflicts.keys().collect();
         opids.sort();
         opids.reverse();
         opids.first().cloned().unwrap().clone()
     }
 
     pub(super) fn ordered_statetree_values(&self) -> Vec<(amp::OpID, StateTreeValue)> {
-        let mut opids: Vec<amp::OpID> = self.0.keys().cloned().collect();
+        let mut opids: Vec<amp::OpID> = self.conflicts.keys().cloned().collect();
         opids.sort();
         opids.reverse();
         opids
             .iter()
-            .map(|oid| (oid.clone(), self.0.get(oid).unwrap().clone()))
+            .map(|oid| (oid.clone(), self.conflicts.get(oid).unwrap().clone()))
             .collect()
     }
 
     pub(super) fn update_default(&self, val: StateTreeValue) -> MultiValue {
-        MultiValue(self.0.update(self.default_opid(), val))
+        MultiValue{
+            conflicts: self.conflicts.update(self.default_opid(), val)
+        }
     }
 
     pub(super) fn values(&self) -> std::collections::HashMap<amp::OpID, Value> {

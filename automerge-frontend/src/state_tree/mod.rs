@@ -15,8 +15,12 @@ use resolved_path::{
     ResolvedTable, ResolvedText,
 };
 
-pub(crate) struct LocalStateChange {
+/// Represents the result of running a local operation (i.e one that happens within the frontend
+/// before any interaction with a backend).
+pub(crate) struct LocalOperationResult {
+    /// The new state tree after the operation is executed
     pub new_state: StateTree,
+    /// Any operations which need to be sent to the backend to reconcile this change
     pub new_ops: Vec<amp::Op>,
 }
 

@@ -1,5 +1,5 @@
 use crate::error::InvalidChangeRequest;
-use crate::state_tree::{LocalStateChange, ResolvedPath, StateTree};
+use crate::state_tree::{LocalOperationResult, ResolvedPath, StateTree};
 use crate::value::Value;
 use crate::{Path, PathElement};
 use automerge_protocol as amp;
@@ -107,7 +107,7 @@ impl MutationTracker {
         }
     }
 
-    fn apply_state_change(&mut self, change: LocalStateChange) {
+    fn apply_state_change(&mut self, change: LocalOperationResult) {
         self.state = change.new_state;
         self.ops.extend(change.new_ops);
     }

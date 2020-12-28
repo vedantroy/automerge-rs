@@ -1,6 +1,6 @@
 use super::focus::Focus;
 use super::{
-    random_op_id, DiffApplicationResult, LocalStateChange, MultiChar, MultiValue, StateTree,
+    random_op_id, DiffApplicationResult, LocalOperationResult, MultiChar, MultiValue, StateTree,
     StateTreeComposite, StateTreeList, StateTreeMap, StateTreeTable, StateTreeText, StateTreeValue,
 };
 use crate::path::PathElement;
@@ -72,7 +72,7 @@ pub struct ResolvedRoot {
 }
 
 impl ResolvedRoot {
-    pub(crate) fn set_key(&self, key: &str, value: &Value) -> LocalStateChange {
+    pub(crate) fn set_key(&self, key: &str, value: &Value) -> LocalOperationResult {
         let newvalue = MultiValue::new_from_value(
             amp::ObjectID::Root,
             &PathElement::Key(key.to_string()),
@@ -80,14 +80,14 @@ impl ResolvedRoot {
             false,
         );
         let new_state = self.root.update(key.to_string(), newvalue.diffapp());
-        LocalStateChange {
+        LocalOperationResult {
             new_state,
             new_ops: newvalue.ops(),
         }
     }
 
-    pub(crate) fn delete_key(&self, key: &str) -> LocalStateChange {
-        LocalStateChange {
+    pub(crate) fn delete_key(&self, key: &str) -> LocalOperationResult {
+        LocalOperationResult {
             new_state: self.root.remove(key),
             new_ops: vec![amp::Op {
                 action: amp::OpType::Del,
@@ -111,12 +111,12 @@ pub struct ResolvedCounter {
 }
 
 impl ResolvedCounter {
-    pub(crate) fn increment(&self, by: i64) -> LocalStateChange {
+    pub(crate) fn increment(&self, by: i64) -> LocalOperationResult {
         let diffapp = DiffApplicationResult::pure(self.multivalue.update_default(
             StateTreeValue::Leaf(amp::ScalarValue::Counter(self.current_value + by)),
         ));
         let new_state = self.focus.update(diffapp);
-        LocalStateChange {
+        LocalOperationResult {
             new_state,
             new_ops: vec![amp::Op {
                 action: amp::OpType::Inc,
@@ -138,7 +138,7 @@ pub struct ResolvedMap {
 }
 
 impl ResolvedMap {
-    pub(crate) fn set_key(&self, key: &str, value: &Value) -> LocalStateChange {
+    pub(crate) fn set_key(&self, key: &str, value: &Value) -> LocalOperationResult {
         let newvalue = MultiValue::new_from_value(
             self.value.object_id.clone(),
             &PathElement::Key(key.to_string()),
@@ -155,20 +155,20 @@ impl ResolvedMap {
                 im::HashMap::new().update(self.value.object_id.clone(), new_composite),
             ))
         });
-        LocalStateChange {
+        LocalOperationResult {
             new_state: self.focus.update(diffapp),
             new_ops: newvalue.ops(),
         }
     }
 
-    pub(crate) fn delete_key(&self, key: &str) -> LocalStateChange {
+    pub(crate) fn delete_key(&self, key: &str) -> LocalOperationResult {
         let new_value = self.value.without(key);
         let new_composite = StateTreeComposite::Map(new_value);
         let new_mv = self
             .multivalue
             .update_default(StateTreeValue::Composite(new_composite));
         let diffapp = DiffApplicationResult::pure(new_mv);
-        LocalStateChange {
+        LocalOperationResult {
             new_state: self.focus.update(diffapp),
             new_ops: vec![amp::Op {
                 action: amp::OpType::Del,
@@ -190,7 +190,7 @@ pub struct ResolvedTable {
 }
 
 impl ResolvedTable {
-    pub(crate) fn set_key(&self, key: &str, value: &Value) -> LocalStateChange {
+    pub(crate) fn set_key(&self, key: &str, value: &Value) -> LocalOperationResult {
         let newvalue = MultiValue::new_from_value(
             self.value.object_id.clone(),
             &PathElement::Key(key.to_string()),
@@ -207,20 +207,20 @@ impl ResolvedTable {
                 hashmap!(self.value.object_id.clone() => new_composite),
             ))
         });
-        LocalStateChange {
+        LocalOperationResult {
             new_state: self.focus.update(diffapp),
             new_ops: newvalue.ops(),
         }
     }
 
-    pub(crate) fn delete_key(&self, key: &str) -> LocalStateChange {
+    pub(crate) fn delete_key(&self, key: &str) -> LocalOperationResult {
         let new_value = self.value.without(key);
         let new_composite = StateTreeComposite::Table(new_value);
         let new_mv = self
             .multivalue
             .update_default(StateTreeValue::Composite(new_composite));
         let diffapp = DiffApplicationResult::pure(new_mv);
-        LocalStateChange {
+        LocalOperationResult {
             new_state: self.focus.update(diffapp),
             new_ops: vec![amp::Op {
                 action: amp::OpType::Del,
@@ -242,7 +242,7 @@ pub struct ResolvedText {
 }
 
 impl ResolvedText {
-    pub(crate) fn insert(&self, index: u32, c: char) -> LocalStateChange {
+    pub(crate) fn insert(&self, index: u32, c: char) -> LocalOperationResult {
         let mut new_chars = self.value.chars.clone();
         new_chars.insert(index.try_into().unwrap(), MultiChar::new_from_char(c));
         let updated = StateTreeComposite::Text(StateTreeText {
@@ -254,7 +254,7 @@ impl ResolvedText {
             .update_default(StateTreeValue::Composite(updated.clone()));
         let diffapp = DiffApplicationResult::pure(mv)
             .with_updates(Some(hashmap!(self.value.object_id.clone() => updated)));
-        LocalStateChange {
+        LocalOperationResult {
             new_state: (self.update)(diffapp),
             new_ops: vec![amp::Op {
                 action: amp::OpType::Set,
@@ -268,7 +268,7 @@ impl ResolvedText {
         }
     }
 
-    pub(crate) fn set(&self, index: u32, c: char) -> LocalStateChange {
+    pub(crate) fn set(&self, index: u32, c: char) -> LocalOperationResult {
         let mut new_chars = self.value.chars.clone();
         new_chars.set(index.try_into().unwrap(), MultiChar::new_from_char(c));
         let updated = StateTreeComposite::Text(StateTreeText {
@@ -281,7 +281,7 @@ impl ResolvedText {
         let diffapp = DiffApplicationResult::pure(mv)
             .with_updates(Some(hashmap!(self.value.object_id.clone() => updated)));
         let new_state = (self.update)(diffapp);
-        LocalStateChange {
+        LocalOperationResult {
             new_state,
             new_ops: vec![amp::Op {
                 action: amp::OpType::Set,
@@ -295,7 +295,7 @@ impl ResolvedText {
         }
     }
 
-    pub(crate) fn remove(&self, index: u32) -> LocalStateChange {
+    pub(crate) fn remove(&self, index: u32) -> LocalOperationResult {
         let mut new_chars = self.value.chars.clone();
         new_chars.remove(index.try_into().unwrap());
         let updated = StateTreeComposite::Text(StateTreeText {
@@ -308,7 +308,7 @@ impl ResolvedText {
         let diffapp = DiffApplicationResult::pure(mv)
             .with_updates(Some(hashmap!(self.value.object_id.clone() => updated)));
         let new_state = (self.update)(diffapp);
-        LocalStateChange {
+        LocalOperationResult {
             new_state,
             new_ops: vec![amp::Op {
                 action: amp::OpType::Del,
@@ -330,7 +330,7 @@ pub struct ResolvedList {
 }
 
 impl ResolvedList {
-    pub(crate) fn set(&self, index: u32, v: &Value) -> LocalStateChange {
+    pub(crate) fn set(&self, index: u32, v: &Value) -> LocalOperationResult {
         let newvalue = MultiValue::new_from_value(
             self.value.object_id.clone(),
             &PathElement::Index(index),
@@ -346,13 +346,13 @@ impl ResolvedList {
                 .with_updates(Some(hashmap!(self.value.object_id.clone() => new_value)))
         });
         let new_state = self.focus.update(diffapp);
-        LocalStateChange {
+        LocalOperationResult {
             new_state,
             new_ops: newvalue.ops(),
         }
     }
 
-    pub(crate) fn insert(&self, index: u32, v: &Value) -> LocalStateChange {
+    pub(crate) fn insert(&self, index: u32, v: &Value) -> LocalOperationResult {
         let newvalue = MultiValue::new_from_value(
             self.value.object_id.clone(),
             &PathElement::Index(index),
@@ -368,20 +368,20 @@ impl ResolvedList {
             DiffApplicationResult::pure(mv)
                 .with_updates(Some(hashmap!(self.value.object_id.clone() => new_value)))
         });
-        LocalStateChange {
+        LocalOperationResult {
             new_state: self.focus.update(diffapp),
             new_ops: newvalue.ops(),
         }
     }
 
-    pub(crate) fn remove(&self, index: u32) -> LocalStateChange {
+    pub(crate) fn remove(&self, index: u32) -> LocalOperationResult {
         let new_value = StateTreeComposite::List(self.value.remove(index.try_into().unwrap()));
         let mv = self
             .multivalue
             .update_default(StateTreeValue::Composite(new_value.clone()));
         let diffapp = DiffApplicationResult::pure(mv)
             .with_updates(Some(hashmap!(self.value.object_id.clone() => new_value)));
-        LocalStateChange {
+        LocalOperationResult {
             new_state: self.focus.update(diffapp),
             new_ops: vec![amp::Op {
                 action: amp::OpType::Del,

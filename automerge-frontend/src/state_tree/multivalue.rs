@@ -1,5 +1,4 @@
 use automerge_protocol as amp;
-use im::hashmap;
 
 use super::{
     new_object_id, random_op_id, value_to_datatype, StateTreeChange, StateTreeComposite,
@@ -9,26 +8,33 @@ use crate::error;
 use crate::path::PathElement;
 use crate::value::Value;
 use std::convert::TryInto;
+use std::iter::Iterator;
 
 /// A set of conflicting values for the same key, indexed by OpID
-// TODO make the type system aware that this always has at least one value
 #[derive(Debug, Clone)]
-pub(super) struct MultiValue{
-    conflicts: im::HashMap<amp::OpID, StateTreeValue>
+pub(super) struct MultiValue {
+    winning_value: (amp::OpID, StateTreeValue),
+    conflicts: im::HashMap<amp::OpID, StateTreeValue>,
 }
 
-
 impl MultiValue {
-    pub(super) fn new() -> MultiValue {
-        MultiValue{
-            conflicts: im::HashMap::new()
+    pub(super) fn new_from_statetree_value(opid: amp::OpID, value: StateTreeValue) -> MultiValue {
+        MultiValue {
+            winning_value: (opid, value),
+            conflicts: im::HashMap::new(),
         }
     }
 
-    pub(super) fn new_from_statetree_value(value: StateTreeValue) -> MultiValue {
-        MultiValue{
-            conflicts: hashmap! {random_op_id() => value}
-        }
+    pub fn new_from_diff(
+        opid: amp::OpID,
+        diff: &amp::Diff,
+    ) -> Result<StateTreeChange<MultiValue>, error::InvalidPatch> {
+        StateTreeValue::new_from_diff(diff)?.fallible_map(move |value| {
+            Ok(MultiValue {
+                winning_value: (opid, value),
+                conflicts: im::HashMap::new(),
+            })
+        })
     }
 
     pub(super) fn new_from_value(
@@ -66,12 +72,13 @@ impl MultiValue {
                         })
                     })
                     .map(|map| {
-                        MultiValue::new_from_statetree_value(StateTreeValue::Composite(
-                            StateTreeComposite::Map(StateTreeMap {
+                        MultiValue::new_from_statetree_value(
+                            random_op_id(),
+                            StateTreeValue::Composite(StateTreeComposite::Map(StateTreeMap {
                                 object_id: map_id.clone(),
                                 props: map,
-                            }),
-                        ))
+                            })),
+                        )
                     })
             }
             Value::Map(props, amp::MapType::Table) => {
@@ -102,12 +109,13 @@ impl MultiValue {
                         })
                     })
                     .map(|table| {
-                        MultiValue::new_from_statetree_value(StateTreeValue::Composite(
-                            StateTreeComposite::Table(StateTreeTable {
+                        MultiValue::new_from_statetree_value(
+                            random_op_id(),
+                            StateTreeValue::Composite(StateTreeComposite::Table(StateTreeTable {
                                 object_id: table_id.clone(),
                                 props: table,
-                            }),
-                        ))
+                            })),
+                        )
                     })
             }
             Value::Sequence(vals) => {
@@ -141,14 +149,13 @@ impl MultiValue {
                         })
                     })
                     .map(|elems| {
-                        MultiValue{
-                            conflicts: hashmap!{
-                                random_op_id() => StateTreeValue::Composite(StateTreeComposite::List(StateTreeList {
-                                    object_id: list_id.clone(),
-                                    elements: elems,
-                                })),
-                            }
-                        }
+                        MultiValue::new_from_statetree_value(
+                            random_op_id(),
+                            StateTreeValue::Composite(StateTreeComposite::List(StateTreeList {
+                                object_id: list_id.clone(),
+                                elements: elems,
+                            })),
+                        )
                     })
             }
             Value::Text(chars) => {
@@ -189,16 +196,20 @@ impl MultiValue {
                         })
                     })
                     .map(|newchars| {
-                        MultiValue::new_from_statetree_value(StateTreeValue::Composite(
-                            StateTreeComposite::Text(StateTreeText {
+                        MultiValue::new_from_statetree_value(
+                            random_op_id(),
+                            StateTreeValue::Composite(StateTreeComposite::Text(StateTreeText {
                                 object_id: text_id.clone(),
                                 chars: newchars,
-                            }),
-                        ))
+                            })),
+                        )
                     })
             }
             Value::Primitive(v) => NewValue::init(
-                MultiValue::new_from_statetree_value(StateTreeValue::Leaf(v.clone())),
+                MultiValue::new_from_statetree_value(
+                    random_op_id(),
+                    StateTreeValue::Leaf(v.clone()),
+                ),
                 amp::Op {
                     action: amp::OpType::Set,
                     obj: parent_id.to_string(),
@@ -214,63 +225,101 @@ impl MultiValue {
 
     pub(super) fn apply_diff(
         &self,
-        diff: &std::collections::HashMap<amp::OpID, amp::Diff>,
+        opid: &amp::OpID,
+        subdiff: &amp::Diff,
     ) -> Result<StateTreeChange<MultiValue>, error::InvalidPatch> {
-        let mut result = StateTreeChange::pure(self.conflicts.clone());
-        for (opid, subdiff) in diff.iter() {
-            let application_result = if let Some(existing_value) = self.conflicts.get(opid) {
-                match existing_value {
-                    StateTreeValue::Leaf(_) => StateTreeValue::new_from_diff(subdiff),
-                    StateTreeValue::Composite(composite) => Ok(composite
-                        .apply_diff(subdiff)?
-                        .map(StateTreeValue::Composite)),
-                }
-            } else {
-                StateTreeValue::new_from_diff(subdiff)
-            }?;
-            result = result
-                .map(|u| u.update(opid.clone(), application_result.value().clone()))
-                .with_updates(application_result.index_updates().cloned());
-        }
-        Ok(result.map(|conflicts| MultiValue{conflicts}))
+        let current = self.tree_values();
+        let update_for_opid = if let Some(existing_value) = current.get(opid) {
+            match existing_value {
+                StateTreeValue::Leaf(_) => StateTreeValue::new_from_diff(subdiff),
+                StateTreeValue::Composite(composite) => composite
+                    .apply_diff(subdiff)
+                    .map(|value| value.map(StateTreeValue::Composite)),
+            }
+        } else {
+            StateTreeValue::new_from_diff(subdiff)
+        }?;
+        update_for_opid.fallible_map(|update| {
+            Self::multivalue_from_opids_and_values(current.update(opid.clone(), update))
+        })
     }
 
-    pub(super) fn default_statetree_value(&self) -> Option<StateTreeValue> {
-        self.conflicts.get(&self.default_opid()).cloned()
+    pub(super) fn apply_diff_iter<'a, 'b, I>(
+        &'a self,
+        diff: &mut I,
+    ) -> Result<StateTreeChange<MultiValue>, error::InvalidPatch>
+    where
+        I: Iterator<Item = (&'b amp::OpID, &'b amp::Diff)>,
+    {
+        let init = Ok(StateTreeChange::pure(self.tree_values()));
+        let updated = diff.fold(init, move |updated_so_far, (opid, subdiff)| {
+            //let result_so_far = result_so_far?;
+            updated_so_far?.fallible_and_then(|updated| {
+                let update_for_opid = if let Some(existing_value) = updated.get(opid) {
+                    match existing_value {
+                        StateTreeValue::Leaf(_) => StateTreeValue::new_from_diff(subdiff),
+                        StateTreeValue::Composite(composite) => composite
+                            .apply_diff(subdiff)
+                            .map(|value| value.map(StateTreeValue::Composite)),
+                    }
+                } else {
+                    StateTreeValue::new_from_diff(subdiff)
+                }?;
+                Ok(update_for_opid.map(|u| updated.update(opid.clone(), u)))
+            })
+        })?;
+        updated.fallible_map(Self::multivalue_from_opids_and_values)
     }
 
-    pub(super) fn default_value(&self) -> Option<Value> {
-        self.default_statetree_value().map(|sv| sv.value())
+    pub(super) fn default_statetree_value(&self) -> StateTreeValue {
+        self.winning_value.1.clone()
+    }
+
+    pub(super) fn default_value(&self) -> Value {
+        self.winning_value.1.value()
     }
 
     pub(super) fn default_opid(&self) -> amp::OpID {
-        let mut opids: Vec<&amp::OpID> = self.conflicts.keys().collect();
-        opids.sort();
-        opids.reverse();
-        opids.first().cloned().unwrap().clone()
-    }
-
-    pub(super) fn ordered_statetree_values(&self) -> Vec<(amp::OpID, StateTreeValue)> {
-        let mut opids: Vec<amp::OpID> = self.conflicts.keys().cloned().collect();
-        opids.sort();
-        opids.reverse();
-        opids
-            .iter()
-            .map(|oid| (oid.clone(), self.conflicts.get(oid).unwrap().clone()))
-            .collect()
+        self.winning_value.0.clone()
     }
 
     pub(super) fn update_default(&self, val: StateTreeValue) -> MultiValue {
-        MultiValue{
-            conflicts: self.conflicts.update(self.default_opid(), val)
+        MultiValue {
+            winning_value: (self.winning_value.0.clone(), val),
+            conflicts: self.conflicts.clone(),
         }
     }
 
+    fn tree_values(&self) -> im::HashMap<amp::OpID, StateTreeValue> {
+        self.conflicts
+            .update(self.winning_value.0.clone(), self.winning_value.1.clone())
+    }
+
     pub(super) fn values(&self) -> std::collections::HashMap<amp::OpID, Value> {
-        self.ordered_statetree_values()
-            .into_iter()
-            .map(|(oid, value)| (oid, value.value()))
+        self.tree_values()
+            .iter()
+            .map(|(opid, v)| (opid.clone(), v.value()))
             .collect()
+    }
+
+    fn multivalue_from_opids_and_values<I>(
+        opids_and_values: I,
+    ) -> Result<MultiValue, error::InvalidPatch>
+    where
+        I: IntoIterator<Item = (amp::OpID, StateTreeValue)>,
+    {
+        let mut opids_and_values_vec: Vec<(amp::OpID, StateTreeValue)> =
+            opids_and_values.into_iter().collect();
+        opids_and_values_vec.sort_by(|(o1, _), (o2, _)| o1.cmp(o2));
+        opids_and_values_vec.reverse();
+        //updates_vec.sort_by_key(|(o, _)| o.clone());
+        match opids_and_values_vec.split_first() {
+            Some(((opid, value), rest)) => Ok(MultiValue {
+                winning_value: (opid.clone(), value.clone()),
+                conflicts: rest.into(),
+            }),
+            None => Err(error::InvalidPatch::DiffCreatedObjectWithNoValue),
+        }
     }
 }
 
@@ -281,7 +330,7 @@ pub(super) struct NewValue<T> {
 }
 
 impl<T> NewValue<T> {
-    pub(super) fn diffapp(&self) -> StateTreeChange<T>
+    pub(super) fn state_tree_change(&self) -> StateTreeChange<T>
     where
         T: Clone,
     {

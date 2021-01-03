@@ -2,6 +2,7 @@ use crate::error;
 use crate::Value;
 use crate::{Path, PathElement};
 use automerge_protocol as amp;
+use im::hashmap;
 use std::collections::HashMap;
 use std::convert::TryInto;
 
@@ -122,7 +123,7 @@ impl StateTree {
                     match next_elem {
                         PathElement::Key(k) => {
                             key_in_container = PathElement::Key(k.clone());
-                            match current_obj.default_statetree_value().unwrap() {
+                            match current_obj.default_statetree_value() {
                                 StateTreeValue::Composite(StateTreeComposite::Map(map)) => {
                                     if let Some(target) = map.props.get(&k) {
                                         let new_focus = focus::Focus::new_map(
@@ -158,7 +159,7 @@ impl StateTree {
                         }
                         PathElement::Index(i) => {
                             key_in_container = PathElement::Index(i);
-                            match current_obj.default_statetree_value().unwrap() {
+                            match current_obj.default_statetree_value() {
                                 StateTreeValue::Composite(StateTreeComposite::List(list)) => {
                                     let index = i.try_into().unwrap();
                                     if let Some(target) = list.elements.get(index) {
@@ -195,7 +196,7 @@ impl StateTree {
                         }
                     };
                 }
-                let resolved_path = match current_obj.default_statetree_value().unwrap() {
+                let resolved_path = match current_obj.default_statetree_value() {
                     StateTreeValue::Leaf(v) => match v {
                         amp::ScalarValue::Counter(v) => ResolvedPath::Counter(ResolvedCounter {
                             containing_object_id: parent_object_id,
@@ -379,20 +380,20 @@ impl StateTreeComposite {
             Self::Map(StateTreeMap { props, .. }) => Value::Map(
                 props
                     .iter()
-                    .filter_map(|(k, v)| v.default_value().map(|v| (k.clone(), v)))
+                    .map(|(k, v)| (k.clone(), v.default_value()))
                     .collect(),
                 amp::MapType::Map,
             ),
             Self::Table(StateTreeTable { props, .. }) => Value::Map(
                 props
                     .iter()
-                    .filter_map(|(k, v)| v.default_value().map(|v| (k.clone(), v)))
+                    .map(|(k, v)| (k.clone(), v.default_value()))
                     .collect(),
                 amp::MapType::Table,
             ),
             Self::List(StateTreeList {
                 elements: elems, ..
-            }) => Value::Sequence(elems.iter().filter_map(|e| e.default_value()).collect()),
+            }) => Value::Sequence(elems.iter().map(|e| e.default_value()).collect()),
             Self::Text(StateTreeText { chars, .. }) => {
                 Value::Text(chars.iter().filter_map(|c| c.default_char()).collect())
             }
@@ -471,33 +472,42 @@ impl StateTreeMap {
         }
     }
 
-    fn apply_diff(
-        &self,
-        prop_diffs: &HashMap<String, HashMap<amp::OpID, amp::Diff>>,
+    fn apply_diff<'a, 'b>(
+        &'a self,
+        prop_diffs: &'b HashMap<String, HashMap<amp::OpID, amp::Diff>>,
     ) -> Result<StateTreeChange<StateTreeMap>, error::InvalidPatch> {
-        let mut new_props = self.props.clone();
-        let mut object_index_updates = im::HashMap::new();
-        for (prop, prop_diff) in prop_diffs.iter() {
-            if prop_diff.is_empty() {
-                new_props = new_props.without(prop)
-            } else {
-                let node = new_props.get(prop).cloned().unwrap_or_else(MultiValue::new);
-                let node_result = node.apply_diff(prop_diff)?;
-                if let Some(updates) = node_result.index_updates() {
-                    object_index_updates = updates.clone().union(object_index_updates);
-                }
-                new_props = new_props.update(prop.clone(), node_result.value().clone())
-            }
-        }
-        let new_map = StateTreeMap {
-            object_id: self.object_id.clone(),
-            props: new_props,
-        };
-        object_index_updates = object_index_updates.update(
-            self.object_id.clone(),
-            StateTreeComposite::Map(new_map.clone()),
-        );
-        Ok(StateTreeChange::pure(new_map).with_updates(Some(object_index_updates)))
+        let init_changed_props = Ok(StateTreeChange::pure(self.props.clone()));
+        let changed_props =
+            prop_diffs
+                .iter()
+                .fold(init_changed_props, |changes_so_far, (prop, prop_diff)| {
+                    let mut diff_iter = prop_diff.iter();
+                    match diff_iter.next() {
+                        None => changes_so_far.map(|cr| cr.map(|c| c.without(prop))),
+                        Some((opid, diff)) => {
+                            changes_so_far?.fallible_and_then(move |changes_so_far| {
+                                let mut node: StateTreeChange<MultiValue> =
+                                    match changes_so_far.get(prop) {
+                                        Some(n) => n.apply_diff(opid, diff)?,
+                                        None => MultiValue::new_from_diff(opid.clone(), diff)?,
+                                    };
+                                node = node.fallible_and_then(move |n| {
+                                    n.apply_diff_iter(&mut diff_iter)
+                                })?;
+                                Ok(node.map(|n| changes_so_far.update(prop.to_string(), n)))
+                            })
+                        }
+                    }
+                })?;
+        Ok(changed_props.and_then(|new_props| {
+            let new_map = StateTreeMap {
+                object_id: self.object_id.clone(),
+                props: new_props,
+            };
+            StateTreeChange::pure(new_map.clone()).with_updates(Some(
+                hashmap! {self.object_id.clone() => StateTreeComposite::Map(new_map)},
+            ))
+        }))
     }
 }
 
@@ -526,29 +536,37 @@ impl StateTreeTable {
         &self,
         prop_diffs: &HashMap<String, HashMap<amp::OpID, amp::Diff>>,
     ) -> Result<StateTreeChange<StateTreeTable>, error::InvalidPatch> {
-        let mut new_props = self.props.clone();
-        let mut object_index_updates = im::HashMap::new();
-        for (prop, prop_diff) in prop_diffs.iter() {
-            if prop_diff.is_empty() {
-                new_props = new_props.without(prop)
-            } else {
-                let node = new_props.get(prop).cloned().unwrap_or_else(MultiValue::new);
-                let node_result = node.apply_diff(prop_diff)?;
-                if let Some(updates) = node_result.index_updates() {
-                    object_index_updates = updates.clone().union(object_index_updates);
-                }
-                new_props = new_props.update(prop.clone(), node_result.value().clone())
-            }
-        }
-        let new_table = StateTreeTable {
-            object_id: self.object_id.clone(),
-            props: new_props,
-        };
-        object_index_updates = object_index_updates.update(
-            self.object_id.clone(),
-            StateTreeComposite::Table(new_table.clone()),
-        );
-        Ok(StateTreeChange::pure(new_table).with_updates(Some(object_index_updates)))
+        let init_changed_props = Ok(StateTreeChange::pure(self.props.clone()));
+        let changed_props =
+            prop_diffs
+                .iter()
+                .fold(init_changed_props, |changes_so_far, (prop, prop_diff)| {
+                    let mut diff_iter = prop_diff.iter();
+                    match diff_iter.next() {
+                        None => changes_so_far.map(|cr| cr.map(|c| c.without(prop))),
+                        Some((opid, diff)) => {
+                            changes_so_far?.fallible_and_then(move |changes_so_far| {
+                                let mut node = match changes_so_far.get(prop) {
+                                    Some(n) => n.apply_diff(opid, diff)?,
+                                    None => MultiValue::new_from_diff(opid.clone(), diff)?,
+                                };
+                                node = node.fallible_and_then(move |n| {
+                                    n.apply_diff_iter(&mut diff_iter)
+                                })?;
+                                Ok(node.map(|n| changes_so_far.update(prop.to_string(), n)))
+                            })
+                        }
+                    }
+                })?;
+        Ok(changed_props.and_then(|new_props| {
+            let new_table = StateTreeTable {
+                object_id: self.object_id.clone(),
+                props: new_props,
+            };
+            StateTreeChange::pure(new_table.clone()).with_updates(Some(
+                hashmap! {self.object_id.clone() => StateTreeComposite::Table(new_table)},
+            ))
+        }))
     }
 }
 
@@ -678,45 +696,86 @@ impl StateTreeList {
         edits: &[amp::DiffEdit],
         new_props: &HashMap<usize, HashMap<amp::OpID, amp::Diff>>,
     ) -> Result<StateTreeChange<StateTreeList>, error::InvalidPatch> {
-        let mut new_elements = self.elements.clone();
+        let mut init_new_elements: im::Vector<(amp::OpID, Option<MultiValue>)> = self
+            .elements
+            .iter()
+            .map(|e| (e.default_opid(), Some(e.clone())))
+            .collect();
         for edit in edits.iter() {
             match edit {
                 amp::DiffEdit::Remove { index } => {
-                    new_elements.remove(*index);
+                    init_new_elements.remove(*index);
                 }
                 amp::DiffEdit::Insert { index } => {
-                    if (*index) == new_elements.len() {
-                        new_elements.push_back(MultiValue::new())
+                    if (*index) == init_new_elements.len() {
+                        init_new_elements.push_back((random_op_id(), None));
                     } else {
-                        new_elements.insert(*index, MultiValue::new())
+                        init_new_elements.insert(*index, (random_op_id(), None));
                     }
                 }
             };
         }
-        let mut object_index_updates = im::HashMap::new();
-        for (index, prop_diff) in new_props {
-            if let Some(node) = new_elements.get(*index) {
-                let node_result = node.apply_diff(prop_diff)?;
-                new_elements = new_elements.update(*index, node_result.value().clone());
-                if let Some(update) = node_result.index_updates() {
-                    object_index_updates = update.clone().union(object_index_updates);
+        let init_changed_props = Ok(StateTreeChange::pure(init_new_elements));
+        let updated =
+            new_props
+                .iter()
+                .fold(init_changed_props, |changes_so_far, (index, prop_diff)| {
+                    let mut diff_iter = prop_diff.iter();
+                    match diff_iter.next() {
+                        None => changes_so_far.map(|cr| {
+                            cr.map(|c| {
+                                let mut result = c;
+                                result.remove(*index);
+                                result
+                            })
+                        }),
+                        Some((opid, diff)) => {
+                            changes_so_far?.fallible_and_then(move |changes_so_far| {
+                                let mut node = match changes_so_far.get(*index) {
+                                    Some((_, Some(n))) => n.apply_diff(opid, diff)?,
+                                    Some((_, None)) => {
+                                        MultiValue::new_from_diff(opid.clone(), diff)?
+                                    }
+                                    None => {
+                                        return Err(error::InvalidPatch::InvalidIndex {
+                                            object_id: self.object_id.clone(),
+                                            index: *index,
+                                        })
+                                    }
+                                };
+                                node = node.fallible_and_then(move |n| {
+                                    n.apply_diff_iter(&mut diff_iter)
+                                })?;
+                                Ok(node.map(|n| {
+                                    changes_so_far.update(*index, (n.default_opid(), Some(n)))
+                                }))
+                            })
+                        }
+                    }
+                })?;
+        updated.fallible_and_then(|new_elements_and_opids| {
+            let mut new_elements: im::Vector<MultiValue> = im::Vector::new();
+            for (index, (_, maybe_elem)) in new_elements_and_opids.into_iter().enumerate() {
+                match maybe_elem {
+                    Some(e) => {
+                        new_elements.push_back(e.clone());
+                    }
+                    None => {
+                        return Err(error::InvalidPatch::InvalidIndex {
+                            object_id: self.object_id.clone(),
+                            index,
+                        });
+                    }
                 }
-            } else {
-                return Err(error::InvalidPatch::InvalidIndex {
-                    object_id: self.object_id.clone(),
-                    index: *index,
-                });
             }
-        }
-        let composite = StateTreeList {
-            object_id: self.object_id.clone(),
-            elements: new_elements,
-        };
-        object_index_updates = object_index_updates.update(
-            self.object_id.clone(),
-            StateTreeComposite::List(composite.clone()),
-        );
-        Ok(StateTreeChange::pure(composite).with_updates(Some(object_index_updates)))
+            let new_list = StateTreeList {
+                object_id: self.object_id.clone(),
+                elements: new_elements,
+            };
+            Ok(StateTreeChange::pure(new_list.clone()).with_updates(Some(
+                hashmap! {self.object_id.clone() => StateTreeComposite::List(new_list)},
+            )))
+        })
     }
 }
 

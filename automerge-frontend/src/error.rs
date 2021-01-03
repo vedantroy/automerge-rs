@@ -74,6 +74,8 @@ pub enum InvalidPatch {
     InvalidIndex { object_id: ObjectID, index: usize },
     #[error("Patch sent us a diff which referenced an object which does not exist but had no details on how to create it")]
     UnchangedDiffForNonExistentObject,
+    #[error("The patch tried to create an object but specified no value for the new object")]
+    DiffCreatedObjectWithNoValue,
 }
 
 #[derive(Error, Debug, PartialEq)]

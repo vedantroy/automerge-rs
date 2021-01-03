@@ -369,6 +369,14 @@ impl Frontend {
     pub fn get_value(&self, path: &Path) -> Option<Value> {
         self.state.as_ref().and_then(|s| s.get_value(path))
     }
+
+    /// Returns the value given by path, if it exists
+    pub fn value_at_path(&self, path: &Path) -> Option<Value> {
+        self.state
+            .as_ref()
+            .and_then(|s| s.resolve_path(&path))
+            .map(|o| o.default_value())
+    }
 }
 
 fn system_time() -> Option<i64> {

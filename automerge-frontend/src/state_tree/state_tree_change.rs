@@ -32,7 +32,7 @@ where
 
     pub(super) fn map<F, G>(self, f: F) -> StateTreeChange<G>
     where
-        F: Fn(T) -> G,
+        F: FnOnce(T) -> G,
     {
         StateTreeChange {
             value: f(self.value),
@@ -40,9 +40,19 @@ where
         }
     }
 
+    pub(super) fn fallible_map<F, G, E>(self, f: F) -> Result<StateTreeChange<G>, E>
+    where
+        F: FnOnce(T) -> Result<G, E>,
+    {
+        Ok(StateTreeChange {
+            value: f(self.value)?,
+            index_updates: self.index_updates,
+        })
+    }
+
     pub(super) fn and_then<F, G>(self, f: F) -> StateTreeChange<G>
     where
-        F: Fn(T) -> StateTreeChange<G>,
+        F: FnOnce(T) -> StateTreeChange<G>,
     {
         let diff = f(self.value.clone());
         let result = self.with_updates(diff.index_updates.clone());
@@ -54,7 +64,7 @@ where
 
     pub(super) fn fallible_and_then<F, G, E>(self, f: F) -> Result<StateTreeChange<G>, E>
     where
-        F: Fn(T) -> Result<StateTreeChange<G>, E>,
+        F: FnOnce(T) -> Result<StateTreeChange<G>, E>,
     {
         let diff = f(self.value.clone())?;
         let result = self.with_updates(diff.index_updates.clone());

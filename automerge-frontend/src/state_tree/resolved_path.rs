@@ -24,16 +24,14 @@ pub enum ResolvedPath {
 impl ResolvedPath {
     pub fn default_value(&self) -> Value {
         match self {
-            ResolvedPath::Map(maptarget) => maptarget.multivalue.default_value().unwrap(),
+            ResolvedPath::Map(maptarget) => maptarget.multivalue.default_value(),
             ResolvedPath::Root(root) => root.root.value(),
-            ResolvedPath::Table(tabletarget) => tabletarget.multivalue.default_value().unwrap(),
-            ResolvedPath::List(listtarget) => listtarget.multivalue.default_value().unwrap(),
-            ResolvedPath::Text(texttarget) => texttarget.multivalue.default_value().unwrap(),
-            ResolvedPath::Counter(countertarget) => {
-                countertarget.multivalue.default_value().unwrap()
-            }
-            ResolvedPath::Primitive(p) => p.multivalue.default_value().unwrap(),
-            ResolvedPath::Character(ctarget) => ctarget.multivalue.default_value().unwrap(),
+            ResolvedPath::Table(tabletarget) => tabletarget.multivalue.default_value(),
+            ResolvedPath::List(listtarget) => listtarget.multivalue.default_value(),
+            ResolvedPath::Text(texttarget) => texttarget.multivalue.default_value(),
+            ResolvedPath::Counter(countertarget) => countertarget.multivalue.default_value(),
+            ResolvedPath::Primitive(p) => p.multivalue.default_value(),
+            ResolvedPath::Character(ctarget) => ctarget.multivalue.default_value(),
         }
     }
 
@@ -80,7 +78,9 @@ impl ResolvedRoot {
             value,
             false,
         );
-        let new_state = self.root.update(key.to_string(), newvalue.diffapp());
+        let new_state = self
+            .root
+            .update(key.to_string(), newvalue.state_tree_change());
         LocalOperationResult {
             new_state,
             new_ops: newvalue.ops(),
@@ -146,7 +146,7 @@ impl ResolvedMap {
             value,
             false,
         );
-        let diffapp = newvalue.diffapp().and_then(|v| {
+        let diffapp = newvalue.state_tree_change().and_then(|v| {
             let new_value = self.value.update(key.to_string(), v);
             let new_composite = StateTreeComposite::Map(new_value);
             let new_mv = self
@@ -198,7 +198,7 @@ impl ResolvedTable {
             value,
             false,
         );
-        let diffapp = newvalue.diffapp().and_then(|v| {
+        let diffapp = newvalue.state_tree_change().and_then(|v| {
             let new_value = self.value.update(key.to_string(), v);
             let new_composite = StateTreeComposite::Table(new_value);
             let new_mv = self
@@ -331,7 +331,7 @@ impl ResolvedList {
             v,
             false,
         );
-        let diffapp = newvalue.diffapp().fallible_and_then(|v| {
+        let diffapp = newvalue.state_tree_change().fallible_and_then(|v| {
             let new_value = StateTreeComposite::List(self.value.set(index.try_into().unwrap(), v)?);
             let mv = self
                 .multivalue
@@ -353,7 +353,7 @@ impl ResolvedList {
             v,
             false,
         );
-        let diffapp = newvalue.diffapp().and_then(|v| {
+        let diffapp = newvalue.state_tree_change().and_then(|v| {
             let new_value =
                 StateTreeComposite::List(self.value.insert(index.try_into().unwrap(), v));
             let mv = self

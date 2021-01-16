@@ -57,6 +57,10 @@ pub enum InvalidPatch {
         object_id: ObjectID,
         diff: amp::Diff,
     },
+    #[error(
+        "Received a diff for a character in a text object which created more than one character"
+    )]
+    InsertMultipleCharsInTextChar,
     #[error("Received a diff which had multiple values for a key in a table. Table id was {table_id}, diff was {diff:?}")]
     ConflictsReceivedForTableKey { table_id: ObjectID, diff: amp::Diff },
     #[error("Patch contained a diff which expected object with ID {object_id:?} to be {patch_expected_type:?} but we think it is {actual_type:?}")]
@@ -76,6 +80,8 @@ pub enum InvalidPatch {
     UnchangedDiffForNonExistentObject,
     #[error("The patch tried to create an object but specified no value for the new object")]
     DiffCreatedObjectWithNoValue,
+    #[error("The patch contained a diff with a list edit which referenced the '_head' of a list, rather than a specific element ID")]
+    DiffEditWithHeadElemID,
 }
 
 #[derive(Error, Debug, PartialEq)]

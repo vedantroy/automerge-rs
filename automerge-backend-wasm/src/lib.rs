@@ -67,15 +67,6 @@ impl State {
         rust_to_js(&heads)
     }
 
-    #[wasm_bindgen(js_name = ack)]
-    pub fn ack(&mut self, ack_version: JsValue) -> Result<(), JsValue> {
-        let ver_no = ack_version
-            .as_f64()
-            .ok_or_else(|| to_js_err("ack : invalid version"))?;
-        self.backend.ack(ver_no as u64);
-        Ok(())
-    }
-
     #[wasm_bindgen(js_name = applyLocalChange)]
     pub fn apply_local_change(&mut self, change: JsValue) -> Result<Array, JsValue> {
         let c: UncompressedChange = js_to_rust(change)?;

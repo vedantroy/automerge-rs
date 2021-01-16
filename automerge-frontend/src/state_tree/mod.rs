@@ -10,8 +10,9 @@ mod focus;
 mod multivalue;
 mod resolved_path;
 mod state_tree_change;
-use multivalue::{MultiChar, MultiValue};
+use multivalue::{MultiChar, MultiValue, NewValueRequest};
 pub use resolved_path::ResolvedPath;
+pub(crate) use resolved_path::SetOrInsertPayload;
 use resolved_path::{
     ResolvedChar, ResolvedCounter, ResolvedList, ResolvedMap, ResolvedPrimitive, ResolvedRoot,
     ResolvedTable, ResolvedText,
@@ -114,7 +115,7 @@ impl StateTree {
         stack.reverse();
         if let Some(PathElement::Key(k)) = stack.pop() {
             let mut parent_object_id = amp::ObjectID::Root.clone();
-            let mut key_in_container = PathElement::Key(k.clone());
+            let mut key_in_container: amp::Key = k.clone().into();
             let first_obj = self.root_map.get(&k);
             if let Some(o) = first_obj {
                 let mut focus = Box::new(focus::Focus::new_root(self.clone(), k.clone()));
@@ -122,7 +123,7 @@ impl StateTree {
                 while let Some(next_elem) = stack.pop() {
                     match next_elem {
                         PathElement::Key(k) => {
-                            key_in_container = PathElement::Key(k.clone());
+                            key_in_container = k.clone().into();
                             match current_obj.default_statetree_value() {
                                 StateTreeValue::Composite(StateTreeComposite::Map(map)) => {
                                     if let Some(target) = map.props.get(&k) {
@@ -157,43 +158,41 @@ impl StateTree {
                                 _ => return None,
                             }
                         }
-                        PathElement::Index(i) => {
-                            key_in_container = PathElement::Index(i);
-                            match current_obj.default_statetree_value() {
-                                StateTreeValue::Composite(StateTreeComposite::List(list)) => {
-                                    let index = i.try_into().unwrap();
-                                    if let Some(target) = list.elements.get(index) {
-                                        parent_object_id = list.object_id.clone();
-                                        current_obj = target.clone();
-                                        let new_focus = focus::Focus::new_list(
-                                            focus.clone(),
-                                            list,
-                                            index,
-                                            current_obj.clone(),
-                                        );
-                                        focus = Box::new(new_focus);
+                        PathElement::Index(i) => match current_obj.default_statetree_value() {
+                            StateTreeValue::Composite(StateTreeComposite::List(list)) => {
+                                let index = i.try_into().unwrap();
+                                if let Ok((elemid, target)) = list.elem_at(index) {
+                                    key_in_container = elemid.into();
+                                    parent_object_id = list.object_id.clone();
+                                    current_obj = target.clone();
+                                    let new_focus = focus::Focus::new_list(
+                                        focus.clone(),
+                                        list,
+                                        index,
+                                        current_obj.clone(),
+                                    );
+                                    focus = Box::new(new_focus);
+                                } else {
+                                    return None;
+                                }
+                            }
+                            StateTreeValue::Composite(StateTreeComposite::Text(
+                                StateTreeText { chars, .. },
+                            )) => {
+                                if chars.get(i as usize).is_some() {
+                                    if stack.is_empty() {
+                                        return Some(ResolvedPath::Character(ResolvedChar {
+                                            multivalue: current_obj,
+                                        }));
                                     } else {
                                         return None;
                                     }
-                                }
-                                StateTreeValue::Composite(StateTreeComposite::Text(
-                                    StateTreeText { chars, .. },
-                                )) => {
-                                    if chars.get(i as usize).is_some() {
-                                        if stack.is_empty() {
-                                            return Some(ResolvedPath::Character(ResolvedChar {
-                                                multivalue: current_obj,
-                                            }));
-                                        } else {
-                                            return None;
-                                        }
-                                    } else {
-                                        return None;
-                                    };
-                                }
-                                _ => return None,
+                                } else {
+                                    return None;
+                                };
                             }
-                        }
+                            _ => return None,
+                        },
                     };
                 }
                 let resolved_path = match current_obj.default_statetree_value() {
@@ -395,7 +394,7 @@ impl StateTreeComposite {
                 elements: elems, ..
             }) => Value::Sequence(elems.iter().map(|e| e.default_value()).collect()),
             Self::Text(StateTreeText { chars, .. }) => {
-                Value::Text(chars.iter().filter_map(|c| c.default_char()).collect())
+                Value::Text(chars.iter().map(|c| c.default_char()).collect())
             }
         }
     }
@@ -509,6 +508,13 @@ impl StateTreeMap {
             ))
         }))
     }
+
+    pub fn pred_for_key(&self, key: &str) -> Vec<amp::OpID> {
+        self.props
+            .get(key)
+            .map(|v| v.opids().cloned().collect())
+            .unwrap_or_else(Vec::new)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -568,6 +574,13 @@ impl StateTreeTable {
             ))
         }))
     }
+
+    pub fn pred_for_key(&self, key: &str) -> Vec<amp::OpID> {
+        self.props
+            .get(key)
+            .map(|v| v.opids().cloned().collect())
+            .unwrap_or_else(Vec::new)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -577,20 +590,31 @@ struct StateTreeText {
 }
 
 impl StateTreeText {
-    fn remove(&self, index: usize) -> StateTreeText {
-        let mut new_chars = self.chars.clone();
-        new_chars.remove(index);
-        StateTreeText {
-            object_id: self.object_id.clone(),
-            chars: new_chars,
+    fn remove(&self, index: usize) -> Result<StateTreeText, error::MissingIndexError> {
+        if index >= self.chars.len() {
+            Err(error::MissingIndexError {
+                missing_index: index,
+                size_of_collection: self.chars.len(),
+            })
+        } else {
+            let mut new_chars = self.chars.clone();
+            new_chars.remove(index);
+            Ok(StateTreeText {
+                object_id: self.object_id.clone(),
+                chars: new_chars,
+            })
         }
     }
 
-    fn set(&self, index: usize, value: char) -> Result<StateTreeText, error::MissingIndexError> {
+    fn set(
+        &self,
+        index: usize,
+        value: MultiChar,
+    ) -> Result<StateTreeText, error::MissingIndexError> {
         if self.chars.len() > index {
             Ok(StateTreeText {
                 object_id: self.object_id.clone(),
-                chars: self.chars.update(index, MultiChar::new_from_char(value)),
+                chars: self.chars.update(index, value),
             })
         } else {
             Err(error::MissingIndexError {
@@ -600,12 +624,36 @@ impl StateTreeText {
         }
     }
 
-    fn insert(&self, index: usize, value: char) -> StateTreeText {
-        let mut new_chars = self.chars.clone();
-        new_chars.insert(index, MultiChar::new_from_char(value));
-        StateTreeText {
-            object_id: self.object_id.clone(),
-            chars: new_chars,
+    pub(crate) fn elem_at(
+        &self,
+        index: usize,
+    ) -> Result<(amp::ElementID, char), error::MissingIndexError> {
+        self.chars
+            .get(index)
+            .map(|mc| (mc.default_opid().into(), mc.default_char()))
+            .ok_or_else(|| error::MissingIndexError {
+                missing_index: index,
+                size_of_collection: self.chars.len(),
+            })
+    }
+
+    fn insert(
+        &self,
+        index: usize,
+        value: MultiChar,
+    ) -> Result<StateTreeText, error::MissingIndexError> {
+        if self.chars.len() > index {
+            let mut new_chars = self.chars.clone();
+            new_chars.insert(index, value);
+            Ok(StateTreeText {
+                object_id: self.object_id.clone(),
+                chars: new_chars,
+            })
+        } else {
+            Err(error::MissingIndexError {
+                missing_index: index,
+                size_of_collection: self.chars.len(),
+            })
         }
     }
 
@@ -614,21 +662,50 @@ impl StateTreeText {
         edits: &[amp::DiffEdit],
         props: &HashMap<usize, HashMap<amp::OpID, amp::Diff>>,
     ) -> Result<StateTreeChange<StateTreeText>, error::InvalidPatch> {
-        let mut new_chars = self.chars.clone();
+        let mut new_chars: im::Vector<(amp::OpID, Option<MultiChar>)> = self
+            .chars
+            .iter()
+            .map(|c| (c.default_opid().clone(), Some(c.clone())))
+            .collect();
+        //let mut new_chars = self.chars.clone();
         for edit in edits.iter() {
             match edit {
                 amp::DiffEdit::Remove { index } => {
-                    new_chars.remove(*index);
+                    if *index >= new_chars.len() {
+                        return Err(error::InvalidPatch::InvalidIndex {
+                            object_id: self.object_id.clone(),
+                            index: *index,
+                        });
+                    } else {
+                        new_chars.remove(*index);
+                    }
                 }
-                amp::DiffEdit::Insert { index } => {
-                    new_chars.insert(*index, MultiChar::new());
+                amp::DiffEdit::Insert { index, elem_id } => {
+                    if *index > new_chars.len() {
+                        return Err(error::InvalidPatch::InvalidIndex {
+                            object_id: self.object_id.clone(),
+                            index: *index,
+                        });
+                    } else {
+                        match elem_id {
+                            amp::ElementID::Head => {
+                                return Err(error::InvalidPatch::DiffEditWithHeadElemID)
+                            }
+                            amp::ElementID::ID(opid) => {
+                                new_chars.insert(*index, (opid.clone(), None))
+                            }
+                        }
+                    }
                 }
-            };
+            }
         }
         for (index, prop_diff) in props {
-            if let Some(char) = new_chars.get(*index) {
-                let new_char = char.apply_diff(&self.object_id, prop_diff)?;
-                new_chars = new_chars.update(*index, new_char)
+            if let Some((opid, maybe_char)) = new_chars.get(*index) {
+                let new_char = match maybe_char {
+                    Some(c) => c.apply_diff(&self.object_id, prop_diff)?,
+                    None => MultiChar::new_from_diff(&self.object_id, prop_diff)?,
+                };
+                new_chars = new_chars.update(*index, (opid.clone(), Some(new_char)));
             } else {
                 return Err(error::InvalidPatch::InvalidIndex {
                     object_id: self.object_id.clone(),
@@ -636,15 +713,36 @@ impl StateTreeText {
                 });
             }
         }
+        let mut new_chars_2: im::Vector<MultiChar> = im::Vector::new();
+        for (index, (_, maybe_char)) in new_chars.into_iter().enumerate() {
+            match maybe_char {
+                Some(c) => {
+                    new_chars_2.push_back(c.clone());
+                }
+                None => {
+                    return Err(error::InvalidPatch::InvalidIndex {
+                        object_id: self.object_id.clone(),
+                        index,
+                    });
+                }
+            };
+        }
         let text = StateTreeText {
             object_id: self.object_id.clone(),
-            chars: new_chars,
+            chars: new_chars_2,
         };
         let object_index_updates = im::HashMap::new().update(
             self.object_id.clone(),
             StateTreeComposite::Text(text.clone()),
         );
         Ok(StateTreeChange::pure(text).with_updates(Some(object_index_updates)))
+    }
+
+    pub fn pred_for_index(&self, index: u32) -> Vec<amp::OpID> {
+        self.chars
+            .get(index.try_into().unwrap())
+            .map(|v| v.opids().cloned().collect())
+            .unwrap_or_else(Vec::new)
     }
 }
 
@@ -655,12 +753,19 @@ struct StateTreeList {
 }
 
 impl StateTreeList {
-    fn remove(&self, index: usize) -> StateTreeList {
-        let mut new_elems = self.elements.clone();
-        new_elems.remove(index);
-        StateTreeList {
-            object_id: self.object_id.clone(),
-            elements: new_elems,
+    fn remove(&self, index: usize) -> Result<StateTreeList, error::MissingIndexError> {
+        if index >= self.elements.len() {
+            Err(error::MissingIndexError {
+                missing_index: index,
+                size_of_collection: self.elements.len(),
+            })
+        } else {
+            let mut new_elems = self.elements.clone();
+            new_elems.remove(index);
+            Ok(StateTreeList {
+                object_id: self.object_id.clone(),
+                elements: new_elems,
+            })
         }
     }
 
@@ -682,12 +787,23 @@ impl StateTreeList {
         }
     }
 
-    fn insert(&self, index: usize, value: MultiValue) -> StateTreeList {
+    fn insert(
+        &self,
+        index: usize,
+        value: MultiValue,
+    ) -> Result<StateTreeList, error::MissingIndexError> {
         let mut new_elems = self.elements.clone();
-        new_elems.insert(index, value);
-        StateTreeList {
-            object_id: self.object_id.clone(),
-            elements: new_elems,
+        if index >= self.elements.len() {
+            Err(error::MissingIndexError {
+                missing_index: index,
+                size_of_collection: self.elements.len(),
+            })
+        } else {
+            new_elems.insert(index, value);
+            Ok(StateTreeList {
+                object_id: self.object_id.clone(),
+                elements: new_elems,
+            })
         }
     }
 
@@ -706,11 +822,17 @@ impl StateTreeList {
                 amp::DiffEdit::Remove { index } => {
                     init_new_elements.remove(*index);
                 }
-                amp::DiffEdit::Insert { index } => {
+                amp::DiffEdit::Insert { index, elem_id } => {
+                    let op_id = match elem_id {
+                        amp::ElementID::Head => {
+                            return Err(error::InvalidPatch::DiffEditWithHeadElemID)
+                        }
+                        amp::ElementID::ID(oid) => oid.clone(),
+                    };
                     if (*index) == init_new_elements.len() {
-                        init_new_elements.push_back((random_op_id(), None));
+                        init_new_elements.push_back((op_id, None));
                     } else {
-                        init_new_elements.insert(*index, (random_op_id(), None));
+                        init_new_elements.insert(*index, (op_id, None));
                     }
                 }
             };
@@ -777,6 +899,26 @@ impl StateTreeList {
             )))
         })
     }
+
+    pub fn pred_for_index(&self, index: u32) -> Vec<amp::OpID> {
+        self.elements
+            .get(index.try_into().unwrap())
+            .map(|v| v.opids().cloned().collect())
+            .unwrap_or_else(Vec::new)
+    }
+
+    pub(crate) fn elem_at(
+        &self,
+        index: usize,
+    ) -> Result<(amp::ElementID, &MultiValue), error::MissingIndexError> {
+        self.elements
+            .get(index)
+            .map(|mv| (mv.default_opid().into(), mv))
+            .ok_or_else(|| error::MissingIndexError {
+                missing_index: index,
+                size_of_collection: self.elements.len(),
+            })
+    }
 }
 
 /// Helper method to get the object type of an amp::Diff
@@ -799,18 +941,6 @@ fn diff_object_id(diff: &amp::Diff) -> Option<amp::ObjectID> {
     }
 }
 
-fn new_object_id() -> amp::ObjectID {
-    amp::ObjectID::ID(random_op_id())
-}
-
 pub fn random_op_id() -> amp::OpID {
     amp::OpID::new(1, &amp::ActorID::random())
-}
-
-fn value_to_datatype(value: &amp::ScalarValue) -> amp::DataType {
-    match value {
-        amp::ScalarValue::Counter(_) => amp::DataType::Counter,
-        amp::ScalarValue::Timestamp(_) => amp::DataType::Timestamp,
-        _ => amp::DataType::Undefined,
-    }
 }

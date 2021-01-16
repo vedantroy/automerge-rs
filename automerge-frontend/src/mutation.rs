@@ -1,5 +1,5 @@
 use crate::error::InvalidChangeRequest;
-use crate::state_tree::{LocalOperationResult, ResolvedPath, StateTree};
+use crate::state_tree::{LocalOperationResult, ResolvedPath, SetOrInsertPayload, StateTree};
 use crate::value::Value;
 use crate::{Path, PathElement};
 use automerge_protocol as amp;
@@ -73,13 +73,21 @@ impl LocalChange {
 pub struct MutationTracker {
     pub(crate) state: StateTree,
     pub(crate) ops: Vec<amp::Op>,
+    pub max_op: u64,
+    actor_id: amp::ActorID,
 }
 
 impl MutationTracker {
-    pub(crate) fn new(state_tree: StateTree) -> MutationTracker {
+    pub(crate) fn new(
+        state_tree: StateTree,
+        max_op: u64,
+        actor_id: amp::ActorID,
+    ) -> MutationTracker {
         MutationTracker {
             state: state_tree,
             ops: Vec::new(),
+            max_op,
+            actor_id,
         }
     }
 
@@ -109,6 +117,7 @@ impl MutationTracker {
 
     fn apply_state_change(&mut self, change: LocalOperationResult) {
         self.state = change.new_state;
+        self.max_op += change.new_ops.len() as u64;
         self.ops.extend(change.new_ops);
     }
 }
@@ -131,17 +140,22 @@ impl MutableDocument for MutationTracker {
                 };
                 if let Some(name) = change.path.name() {
                     if let Some(parent) = self.state.resolve_path(&change.path.parent()) {
+                        let payload = SetOrInsertPayload {
+                            start_op: self.max_op + 1,
+                            actor: &self.actor_id.clone(),
+                            value,
+                        };
                         match (name, parent) {
                             (PathElement::Key(ref k), ResolvedPath::Root(ref root_target)) => {
-                                self.apply_state_change(root_target.set_key(k, value));
+                                self.apply_state_change(root_target.set_key(k, payload));
                                 Ok(())
                             }
                             (PathElement::Key(ref k), ResolvedPath::Map(ref maptarget)) => {
-                                self.apply_state_change(maptarget.set_key(k, value));
+                                self.apply_state_change(maptarget.set_key(k, payload));
                                 Ok(())
                             }
                             (PathElement::Key(ref k), ResolvedPath::Table(ref tabletarget)) => {
-                                self.apply_state_change(tabletarget.set_key(k, value));
+                                self.apply_state_change(tabletarget.set_key(k, payload));
                                 Ok(())
                             }
                             // In this case we are trying to modify a key in something which is not
@@ -150,15 +164,18 @@ impl MutableDocument for MutationTracker {
                                 Err(InvalidChangeRequest::NoSuchPathError { path: change.path })
                             }
                             (PathElement::Index(i), ResolvedPath::List(ref list_target)) => {
-                                self.apply_state_change(list_target.set(*i, value)?);
+                                self.apply_state_change(list_target.set(*i, payload)?);
                                 Ok(())
                             }
                             (PathElement::Index(i), ResolvedPath::Text(ref text)) => match value {
                                 Value::Primitive(amp::ScalarValue::Str(s)) => {
                                     if s.len() == 1 {
-                                        self.apply_state_change(
-                                            text.set(*i, s.chars().next().unwrap())?,
-                                        );
+                                        let payload = SetOrInsertPayload {
+                                            start_op: self.max_op + 1,
+                                            actor: &self.actor_id.clone(),
+                                            value: s.chars().next().unwrap(),
+                                        };
+                                        self.apply_state_change(text.set(*i, payload)?);
                                         Ok(())
                                     } else {
                                         Err(InvalidChangeRequest::InsertNonTextInTextObject {
@@ -195,7 +212,7 @@ impl MutableDocument for MutationTracker {
                                 })
                             }
                             ResolvedPath::List(l) => match name {
-                                PathElement::Index(i) => l.remove(*i),
+                                PathElement::Index(i) => l.remove(*i)?,
                                 _ => {
                                     return Err(InvalidChangeRequest::NoSuchPathError {
                                         path: change.path,
@@ -203,7 +220,7 @@ impl MutableDocument for MutationTracker {
                                 }
                             },
                             ResolvedPath::Text(t) => match name {
-                                PathElement::Index(i) => t.remove(*i),
+                                PathElement::Index(i) => t.remove(*i)?,
                                 _ => {
                                     return Err(InvalidChangeRequest::NoSuchPathError {
                                         path: change.path,
@@ -287,15 +304,25 @@ impl MutableDocument for MutationTracker {
                     };
                     if let Some(parent) = self.state.resolve_path(&change.path.parent()) {
                         match (parent, value) {
-                            (ResolvedPath::List(list_target), val) => {
-                                self.apply_state_change(list_target.insert(*index, val));
+                            (ResolvedPath::List(list_target), _) => {
+                                let payload = SetOrInsertPayload {
+                                    start_op: self.max_op + 1,
+                                    actor: &self.actor_id.clone(),
+                                    value,
+                                };
+                                self.apply_state_change(list_target.insert(*index, payload)?);
                                 Ok(())
                             }
                             (ResolvedPath::Text(text_target), val) => match val {
                                 Value::Primitive(amp::ScalarValue::Str(s)) => {
                                     if s.len() == 1 {
+                                        let payload = SetOrInsertPayload {
+                                            start_op: self.max_op + 1,
+                                            actor: &self.actor_id.clone(),
+                                            value: s.chars().next().unwrap(),
+                                        };
                                         self.apply_state_change(
-                                            text_target.insert(*index, s.chars().next().unwrap()),
+                                            text_target.insert(*index, payload)?,
                                         );
                                         Ok(())
                                     } else {

@@ -1,28 +1,9 @@
-use automerge_protocol as amp;
 use std::fmt;
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum PathElement {
     Key(String),
     Index(u32),
-}
-
-impl PathElement {
-    pub(crate) fn to_request_key(&self) -> amp::RequestKey {
-        match self {
-            PathElement::Key(s) => amp::RequestKey::Str(s.into()),
-            PathElement::Index(i) => amp::RequestKey::Num(*i as u64),
-        }
-    }
-}
-
-impl From<&PathElement> for amp::RequestKey {
-    fn from(element: &PathElement) -> Self {
-        match element {
-            PathElement::Key(s) => amp::RequestKey::Str(s.into()),
-            PathElement::Index(i) => amp::RequestKey::Num(*i as u64),
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

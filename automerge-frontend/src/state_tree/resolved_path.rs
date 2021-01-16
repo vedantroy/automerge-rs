@@ -1,10 +1,10 @@
 use super::focus::Focus;
 use super::{
-    random_op_id, LocalOperationResult, MultiValue, StateTree, StateTreeChange, StateTreeComposite,
-    StateTreeList, StateTreeMap, StateTreeTable, StateTreeText, StateTreeValue,
+    random_op_id, LocalOperationResult, MultiChar, MultiValue, NewValueRequest, StateTree,
+    StateTreeChange, StateTreeComposite, StateTreeList, StateTreeMap, StateTreeTable,
+    StateTreeText, StateTreeValue,
 };
 use crate::error;
-use crate::path::PathElement;
 use crate::Value;
 use automerge_protocol as amp;
 use im::hashmap;
@@ -66,18 +66,36 @@ impl ResolvedPath {
     }
 }
 
+pub(crate) struct SetOrInsertPayload<'a, T> {
+    pub start_op: u64,
+    pub actor: &'a amp::ActorID,
+    pub value: T,
+}
+
 pub struct ResolvedRoot {
     pub(super) root: StateTree,
 }
 
 impl ResolvedRoot {
-    pub(crate) fn set_key(&self, key: &str, value: &Value) -> LocalOperationResult {
-        let newvalue = MultiValue::new_from_value(
-            amp::ObjectID::Root,
-            &PathElement::Key(key.to_string()),
-            value,
-            false,
-        );
+    pub(crate) fn set_key(
+        &self,
+        key: &str,
+        payload: SetOrInsertPayload<&Value>,
+    ) -> LocalOperationResult {
+        let newvalue = MultiValue::new_from_value_2(NewValueRequest {
+            actor: payload.actor,
+            start_op: payload.start_op,
+            key: &key.into(),
+            parent_obj: &amp::ObjectID::Root,
+            value: payload.value,
+            insert: false,
+            pred: self
+                .root
+                .root_map
+                .get(key)
+                .map(|mv| mv.opids().cloned().collect())
+                .unwrap_or_else(Vec::new),
+        });
         let new_state = self
             .root
             .update(key.to_string(), newvalue.state_tree_change());
@@ -88,16 +106,18 @@ impl ResolvedRoot {
     }
 
     pub(crate) fn delete_key(&self, key: &str) -> LocalOperationResult {
+        let existing_value = self.root.root_map.get(key);
+        let pred = existing_value
+            .map(|v| vec![v.default_opid()])
+            .unwrap_or_else(Vec::new);
         LocalOperationResult {
             new_state: self.root.remove(key),
             new_ops: vec![amp::Op {
                 action: amp::OpType::Del,
-                obj: amp::ObjectID::Root.to_string(),
-                key: amp::RequestKey::Str(key.to_string()),
-                child: None,
-                value: None,
-                datatype: None,
+                obj: amp::ObjectID::Root,
+                key: key.into(),
                 insert: false,
+                pred,
             }],
         }
     }
@@ -107,7 +127,7 @@ pub struct ResolvedCounter {
     pub(super) current_value: i64,
     pub(super) multivalue: MultiValue,
     pub(super) containing_object_id: amp::ObjectID,
-    pub(super) key_in_container: PathElement,
+    pub(super) key_in_container: amp::Key,
     pub(super) focus: Box<Focus>,
 }
 
@@ -120,13 +140,11 @@ impl ResolvedCounter {
         LocalOperationResult {
             new_state,
             new_ops: vec![amp::Op {
-                action: amp::OpType::Inc,
-                obj: self.containing_object_id.to_string(),
-                key: (&self.key_in_container).into(),
-                child: None,
-                value: Some(amp::ScalarValue::Int(by)),
-                datatype: Some(amp::DataType::Counter),
+                action: amp::OpType::Inc(by),
+                obj: self.containing_object_id.clone(),
+                key: self.key_in_container.clone(),
                 insert: false,
+                pred: vec![self.multivalue.default_opid()],
             }],
         }
     }
@@ -139,13 +157,20 @@ pub struct ResolvedMap {
 }
 
 impl ResolvedMap {
-    pub(crate) fn set_key(&self, key: &str, value: &Value) -> LocalOperationResult {
-        let newvalue = MultiValue::new_from_value(
-            self.value.object_id.clone(),
-            &PathElement::Key(key.to_string()),
-            value,
-            false,
-        );
+    pub(crate) fn set_key(
+        &self,
+        key: &str,
+        payload: SetOrInsertPayload<&Value>,
+    ) -> LocalOperationResult {
+        let newvalue = MultiValue::new_from_value_2(NewValueRequest {
+            actor: payload.actor,
+            start_op: payload.start_op,
+            parent_obj: &self.value.object_id,
+            key: &key.into(),
+            value: payload.value,
+            insert: false,
+            pred: self.value.pred_for_key(key),
+        });
         let diffapp = newvalue.state_tree_change().and_then(|v| {
             let new_value = self.value.update(key.to_string(), v);
             let new_composite = StateTreeComposite::Map(new_value);
@@ -173,12 +198,10 @@ impl ResolvedMap {
             new_state: self.focus.update(diffapp),
             new_ops: vec![amp::Op {
                 action: amp::OpType::Del,
-                obj: self.value.object_id.to_string(),
-                key: amp::RequestKey::Str(key.to_string()),
-                child: None,
-                value: None,
-                datatype: None,
+                obj: self.value.object_id.clone(),
+                key: key.into(),
                 insert: false,
+                pred: self.value.pred_for_key(key),
             }],
         }
     }
@@ -191,14 +214,21 @@ pub struct ResolvedTable {
 }
 
 impl ResolvedTable {
-    pub(crate) fn set_key(&self, key: &str, value: &Value) -> LocalOperationResult {
-        let newvalue = MultiValue::new_from_value(
-            self.value.object_id.clone(),
-            &PathElement::Key(key.to_string()),
-            value,
-            false,
-        );
-        let diffapp = newvalue.state_tree_change().and_then(|v| {
+    pub(crate) fn set_key(
+        &self,
+        key: &str,
+        payload: SetOrInsertPayload<&Value>,
+    ) -> LocalOperationResult {
+        let newvalue = MultiValue::new_from_value_2(NewValueRequest {
+            actor: payload.actor,
+            start_op: payload.start_op,
+            parent_obj: &self.value.object_id,
+            key: &key.into(),
+            value: payload.value,
+            insert: false,
+            pred: self.value.pred_for_key(key),
+        });
+        let treechange = newvalue.state_tree_change().and_then(|v| {
             let new_value = self.value.update(key.to_string(), v);
             let new_composite = StateTreeComposite::Table(new_value);
             let new_mv = self
@@ -209,7 +239,7 @@ impl ResolvedTable {
             ))
         });
         LocalOperationResult {
-            new_state: self.focus.update(diffapp),
+            new_state: self.focus.update(treechange),
             new_ops: newvalue.ops(),
         }
     }
@@ -225,12 +255,10 @@ impl ResolvedTable {
             new_state: self.focus.update(diffapp),
             new_ops: vec![amp::Op {
                 action: amp::OpType::Del,
-                obj: self.value.object_id.to_string(),
-                key: amp::RequestKey::Str(key.to_string()),
-                child: None,
-                value: None,
-                datatype: None,
+                obj: self.value.object_id.clone(),
+                key: key.into(),
                 insert: false,
+                pred: self.value.pred_for_key(key),
             }],
         }
     }
@@ -243,33 +271,43 @@ pub struct ResolvedText {
 }
 
 impl ResolvedText {
-    pub(crate) fn insert(&self, index: u32, c: char) -> LocalOperationResult {
-        let updated = StateTreeComposite::Text(self.value.insert(index.try_into().unwrap(), c));
+    pub(crate) fn insert(
+        &self,
+        index: u32,
+        payload: SetOrInsertPayload<char>,
+    ) -> Result<LocalOperationResult, error::MissingIndexError> {
+        let (current_elemid, _) = self.value.elem_at(index.try_into().unwrap())?;
+        let insert_op = amp::OpID::new(payload.start_op, payload.actor);
+        let c = MultiChar::new_from_char(insert_op, payload.value);
+        let new_text = self.value.insert(index.try_into().unwrap(), c)?;
+        let updated = StateTreeComposite::Text(new_text);
         let mv = self
             .multivalue
             .update_default(StateTreeValue::Composite(updated.clone()));
-        let diffapp = StateTreeChange::pure(mv)
+        let treechange = StateTreeChange::pure(mv)
             .with_updates(Some(hashmap!(self.value.object_id.clone() => updated)));
-        LocalOperationResult {
-            new_state: (self.update)(diffapp),
+        Ok(LocalOperationResult {
+            new_state: (self.update)(treechange),
             new_ops: vec![amp::Op {
-                action: amp::OpType::Set,
-                obj: self.value.object_id.to_string(),
-                key: amp::RequestKey::Num(index.try_into().unwrap()),
-                child: None,
-                value: Some(amp::ScalarValue::Str(c.to_string())),
-                datatype: None,
+                action: amp::OpType::Set(amp::ScalarValue::Str(payload.value.to_string())),
+                obj: self.value.object_id.clone(),
+                key: current_elemid.into(),
                 insert: true,
+                pred: Vec::new(),
             }],
-        }
+        })
     }
 
     pub(crate) fn set(
         &self,
         index: u32,
-        c: char,
+        payload: SetOrInsertPayload<char>,
     ) -> Result<LocalOperationResult, error::MissingIndexError> {
-        let updated = StateTreeComposite::Text(self.value.set(index.try_into().unwrap(), c)?);
+        let index: usize = index.try_into().unwrap();
+        let (current_elemid, _) = self.value.elem_at(index)?;
+        let update_op = amp::OpID::new(payload.start_op, payload.actor);
+        let c = MultiChar::new_from_char(update_op, payload.value);
+        let updated = StateTreeComposite::Text(self.value.set(index, c)?);
         let mv = self
             .multivalue
             .update_default(StateTreeValue::Composite(updated.clone()));
@@ -279,37 +317,37 @@ impl ResolvedText {
         Ok(LocalOperationResult {
             new_state,
             new_ops: vec![amp::Op {
-                action: amp::OpType::Set,
-                obj: self.value.object_id.to_string(),
-                key: amp::RequestKey::Num(index.try_into().unwrap()),
-                child: None,
-                value: Some(amp::ScalarValue::Str(c.to_string())),
-                datatype: None,
+                action: amp::OpType::Set(amp::ScalarValue::Str(payload.value.to_string())),
+                obj: self.value.object_id.clone(),
+                key: current_elemid.into(),
+                pred: self.value.pred_for_index(index as u32),
                 insert: false,
             }],
         })
     }
 
-    pub(crate) fn remove(&self, index: u32) -> LocalOperationResult {
-        let updated = StateTreeComposite::Text(self.value.remove(index.try_into().unwrap()));
+    pub(crate) fn remove(
+        &self,
+        index: u32,
+    ) -> Result<LocalOperationResult, error::MissingIndexError> {
+        let (current_elemid, _) = self.value.elem_at(index.try_into().unwrap())?;
+        let updated = StateTreeComposite::Text(self.value.remove(index.try_into().unwrap())?);
         let mv = self
             .multivalue
             .update_default(StateTreeValue::Composite(updated.clone()));
         let diffapp = StateTreeChange::pure(mv)
             .with_updates(Some(hashmap!(self.value.object_id.clone() => updated)));
         let new_state = (self.update)(diffapp);
-        LocalOperationResult {
+        Ok(LocalOperationResult {
             new_state,
             new_ops: vec![amp::Op {
                 action: amp::OpType::Del,
-                obj: self.value.object_id.to_string(),
-                key: amp::RequestKey::Num(index.try_into().unwrap()),
-                child: None,
-                value: None,
-                datatype: None,
+                obj: self.value.object_id.clone(),
+                key: current_elemid.into(),
                 insert: false,
+                pred: self.value.pred_for_index(index as u32),
             }],
-        }
+        })
     }
 }
 
@@ -323,15 +361,19 @@ impl ResolvedList {
     pub(crate) fn set(
         &self,
         index: u32,
-        v: &Value,
+        payload: SetOrInsertPayload<&Value>,
     ) -> Result<LocalOperationResult, error::MissingIndexError> {
-        let newvalue = MultiValue::new_from_value(
-            self.value.object_id.clone(),
-            &PathElement::Index(index),
-            v,
-            false,
-        );
-        let diffapp = newvalue.state_tree_change().fallible_and_then(|v| {
+        let (current_elemid, _) = self.value.elem_at(index.try_into().unwrap())?;
+        let newvalue = MultiValue::new_from_value_2(NewValueRequest {
+            actor: payload.actor,
+            start_op: payload.start_op,
+            value: payload.value,
+            pred: self.value.pred_for_index(index),
+            parent_obj: &self.value.object_id.clone(),
+            key: &current_elemid.into(),
+            insert: false,
+        });
+        let treechange = newvalue.state_tree_change().fallible_and_then(|v| {
             let new_value = StateTreeComposite::List(self.value.set(index.try_into().unwrap(), v)?);
             let mv = self
                 .multivalue
@@ -339,54 +381,64 @@ impl ResolvedList {
             Ok(StateTreeChange::pure(mv)
                 .with_updates(Some(hashmap!(self.value.object_id.clone() => new_value))))
         })?;
-        let new_state = self.focus.update(diffapp);
+        let new_state = self.focus.update(treechange);
         Ok(LocalOperationResult {
             new_state,
             new_ops: newvalue.ops(),
         })
     }
 
-    pub(crate) fn insert(&self, index: u32, v: &Value) -> LocalOperationResult {
-        let newvalue = MultiValue::new_from_value(
-            self.value.object_id.clone(),
-            &PathElement::Index(index),
-            v,
-            false,
-        );
-        let diffapp = newvalue.state_tree_change().and_then(|v| {
+    pub(crate) fn insert(
+        &self,
+        index: u32,
+        payload: SetOrInsertPayload<&Value>,
+    ) -> Result<LocalOperationResult, error::MissingIndexError> {
+        let (current_elemid, _) = self.value.elem_at(index.try_into().unwrap())?;
+        let newvalue = MultiValue::new_from_value_2(NewValueRequest {
+            actor: payload.actor,
+            start_op: payload.start_op,
+            value: payload.value,
+            parent_obj: &self.value.object_id,
+            key: &current_elemid.into(),
+            insert: true,
+            pred: Vec::new(),
+        });
+        let treechange = newvalue.state_tree_change().fallible_and_then(|v| {
             let new_value =
-                StateTreeComposite::List(self.value.insert(index.try_into().unwrap(), v));
+                StateTreeComposite::List(self.value.insert(index.try_into().unwrap(), v)?);
             let mv = self
                 .multivalue
                 .update_default(StateTreeValue::Composite(new_value.clone()));
-            StateTreeChange::pure(mv)
-                .with_updates(Some(hashmap!(self.value.object_id.clone() => new_value)))
-        });
-        LocalOperationResult {
-            new_state: self.focus.update(diffapp),
+            Ok(StateTreeChange::pure(mv)
+                .with_updates(Some(hashmap!(self.value.object_id.clone() => new_value))))
+        })?;
+        Ok(LocalOperationResult {
+            new_state: self.focus.update(treechange),
             new_ops: newvalue.ops(),
-        }
+        })
     }
 
-    pub(crate) fn remove(&self, index: u32) -> LocalOperationResult {
-        let new_value = StateTreeComposite::List(self.value.remove(index.try_into().unwrap()));
+    pub(crate) fn remove(
+        &self,
+        index: u32,
+    ) -> Result<LocalOperationResult, error::MissingIndexError> {
+        let (current_elemid, _) = self.value.elem_at(index.try_into().unwrap())?;
+        let new_value = StateTreeComposite::List(self.value.remove(index.try_into().unwrap())?);
         let mv = self
             .multivalue
             .update_default(StateTreeValue::Composite(new_value.clone()));
-        let diffapp = StateTreeChange::pure(mv)
+        let treechange = StateTreeChange::pure(mv)
             .with_updates(Some(hashmap!(self.value.object_id.clone() => new_value)));
-        LocalOperationResult {
-            new_state: self.focus.update(diffapp),
+        Ok(LocalOperationResult {
+            new_state: self.focus.update(treechange),
             new_ops: vec![amp::Op {
                 action: amp::OpType::Del,
-                obj: self.value.object_id.to_string(),
-                key: amp::RequestKey::Num(index as u64),
-                child: None,
-                value: None,
-                datatype: None,
+                obj: self.value.object_id.clone(),
+                key: current_elemid.into(),
                 insert: false,
+                pred: self.value.pred_for_index(index),
             }],
-        }
+        })
     }
 }
 

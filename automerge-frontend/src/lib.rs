@@ -1,4 +1,4 @@
-use automerge_protocol::{ActorID, MapType, ObjectID, Op, OpID, Patch, Request, RequestType};
+use automerge_protocol::{ActorID, MapType, ObjectID, Op, OpID, Patch, UncompressedChange};
 
 mod error;
 mod mutation;
@@ -49,9 +49,11 @@ enum FrontendState {
         in_flight_requests: Vec<u64>,
         reconciled_root_state: state_tree::StateTree,
         optimistically_updated_root_state: state_tree::StateTree,
+        max_op: u64,
     },
     Reconciled {
         root_state: state_tree::StateTree,
+        max_op: u64,
     },
 }
 
@@ -69,6 +71,7 @@ impl FrontendState {
                 in_flight_requests,
                 reconciled_root_state,
                 optimistically_updated_root_state,
+                max_op,
             } => {
                 let mut new_in_flight_requests = in_flight_requests;
                 // If the actor ID and seq exist then this patch corresponds
@@ -103,6 +106,7 @@ impl FrontendState {
                         Some(new_reconciled_root_state.value()),
                         FrontendState::Reconciled {
                             root_state: new_reconciled_root_state,
+                            max_op: patch.max_op,
                         },
                     ),
                     _ => (
@@ -111,11 +115,12 @@ impl FrontendState {
                             in_flight_requests: new_in_flight_requests,
                             reconciled_root_state: new_reconciled_root_state,
                             optimistically_updated_root_state,
+                            max_op,
                         },
                     ),
                 })
             }
-            FrontendState::Reconciled { root_state } => {
+            FrontendState::Reconciled { root_state, .. } => {
                 let new_root_state = if let Some(diff) = &patch.diffs {
                     root_state.apply_diff(diff)?
                 } else {
@@ -125,6 +130,7 @@ impl FrontendState {
                     Some(new_root_state.value()),
                     FrontendState::Reconciled {
                         root_state: new_root_state,
+                        max_op: patch.max_op,
                     },
                 ))
             }
@@ -156,6 +162,7 @@ impl FrontendState {
     /// closure no chnages are made and the error is returned.
     pub fn optimistically_apply_change<F, E>(
         self,
+        actor: &ActorID,
         change_closure: F,
         seq: u64,
     ) -> Result<(Option<Vec<Op>>, FrontendState, Value), E>
@@ -168,9 +175,13 @@ impl FrontendState {
                 mut in_flight_requests,
                 reconciled_root_state,
                 optimistically_updated_root_state,
+                max_op,
             } => {
-                let mut mutation_tracker =
-                    mutation::MutationTracker::new(optimistically_updated_root_state);
+                let mut mutation_tracker = mutation::MutationTracker::new(
+                    optimistically_updated_root_state,
+                    max_op,
+                    actor.clone(),
+                );
                 change_closure(&mut mutation_tracker)?;
                 let new_root_state = mutation_tracker.state.clone();
                 let new_value = new_root_state.value();
@@ -181,12 +192,14 @@ impl FrontendState {
                         in_flight_requests,
                         optimistically_updated_root_state: new_root_state,
                         reconciled_root_state,
+                        max_op: mutation_tracker.max_op,
                     },
                     new_value,
                 ))
             }
-            FrontendState::Reconciled { root_state } => {
-                let mut mutation_tracker = mutation::MutationTracker::new(root_state.clone());
+            FrontendState::Reconciled { root_state, max_op } => {
+                let mut mutation_tracker =
+                    mutation::MutationTracker::new(root_state.clone(), max_op, actor.clone());
                 change_closure(&mut mutation_tracker)?;
                 let new_root_state = mutation_tracker.state.clone();
                 let new_value = new_root_state.value();
@@ -197,6 +210,7 @@ impl FrontendState {
                         in_flight_requests,
                         optimistically_updated_root_state: new_root_state,
                         reconciled_root_state: root_state,
+                        max_op: mutation_tracker.max_op,
                     },
                     new_value,
                 ))
@@ -212,6 +226,13 @@ impl FrontendState {
             _ => Vec::new(),
         }
     }
+
+    fn max_op(&self) -> u64 {
+        match self {
+            FrontendState::WaitingForInFlightRequests { max_op, .. } => *max_op,
+            FrontendState::Reconciled { max_op, .. } => *max_op,
+        }
+    }
 }
 
 pub struct Frontend {
@@ -221,8 +242,6 @@ pub struct Frontend {
     /// `FrontendState` for details. It's an `Option` to allow consuming it
     /// using Option::take whilst behind a mutable reference.
     state: Option<FrontendState>,
-    /// The highest version number we've received from the backend
-    pub version: u64,
     /// A cache of the value of this frontend
     cached_value: Value,
 }
@@ -239,40 +258,44 @@ impl Frontend {
         Frontend {
             actor_id: ActorID::random(),
             seq: 0,
-            state: Some(FrontendState::Reconciled { root_state }),
-            version: 0,
+            state: Some(FrontendState::Reconciled {
+                root_state,
+                max_op: 0,
+            }),
             cached_value: Value::Map(HashMap::new(), MapType::Map),
         }
     }
 
     pub fn new_with_initial_state(
         initial_state: Value,
-    ) -> Result<(Self, Request), InvalidInitialStateError> {
+    ) -> Result<(Self, UncompressedChange), InvalidInitialStateError> {
         match &initial_state {
             Value::Map(kvs, MapType::Map) => {
-                let init_ops = kvs
-                    .iter()
-                    .flat_map(|(k, v)| {
-                        value::value_to_op_requests(
-                            ObjectID::Root,
-                            &PathElement::Key(k.to_string()),
-                            v,
-                            false,
-                        )
-                    })
-                    .collect();
                 let mut front = Frontend::new();
+                let (init_ops, _) =
+                    kvs.iter()
+                        .fold((Vec::new(), 0), |(mut ops, max_op), (k, v)| {
+                            let (more_ops, max_op) = value::value_to_op_requests(
+                                &front.actor_id,
+                                max_op,
+                                ObjectID::Root,
+                                &k.into(),
+                                v,
+                                false,
+                            );
+                            ops.extend(more_ops);
+                            (ops, max_op)
+                        });
 
-                let init_change_request = Request {
-                    actor: front.actor_id.clone(),
-                    time: system_time(),
+                let init_change_request = UncompressedChange {
+                    actor_id: front.actor_id.clone(),
+                    start_op: 1,
+                    time: system_time().unwrap_or(0),
                     seq: 1,
-                    version: 0,
                     message: Some("Initialization".to_string()),
-                    undoable: false,
-                    deps: None,
-                    ops: Some(init_ops),
-                    request_type: RequestType::Change,
+                    deps: Vec::new(),
+                    operations: init_ops,
+                    extra_bytes: Vec::new(),
                 };
                 // Unwrap here is fine because it should be impossible to
                 // cause an error applying a local change from a `Value`. If
@@ -295,35 +318,36 @@ impl Frontend {
         &mut self,
         message: Option<String>,
         change_closure: F,
-    ) -> Result<Option<Request>, E>
+    ) -> Result<Option<UncompressedChange>, E>
     where
         E: Error,
         F: FnOnce(&mut dyn MutableDocument) -> Result<(), E>,
     {
+        let start_op = self.state.as_ref().unwrap().max_op() + 1;
         // TODO this leaves the `state` as `None` if there's an error, it shouldn't
-        let (ops, new_state, new_value) = self
-            .state
-            .take()
-            .unwrap()
-            .optimistically_apply_change(change_closure, self.seq + 1)?;
+        let (ops, new_state, new_value) = self.state.take().unwrap().optimistically_apply_change(
+            &self.actor_id,
+            change_closure,
+            self.seq + 1,
+        )?;
         self.state = Some(new_state);
-        if ops.is_none() {
-            return Ok(None);
+        if let Some(operations) = ops {
+            self.seq += 1;
+            self.cached_value = new_value;
+            let change = UncompressedChange {
+                start_op,
+                actor_id: self.actor_id.clone(),
+                seq: self.seq,
+                time: system_time().unwrap_or(0),
+                message,
+                deps: Vec::new(),
+                operations,
+                extra_bytes: Vec::new(),
+            };
+            Ok(Some(change))
+        } else {
+            Ok(None)
         }
-        self.seq += 1;
-        self.cached_value = new_value;
-        let change_request = Request {
-            actor: self.actor_id.clone(),
-            seq: self.seq,
-            time: system_time(),
-            version: self.version,
-            message,
-            undoable: true,
-            deps: None,
-            ops,
-            request_type: RequestType::Change,
-        };
-        Ok(Some(change_request))
     }
 
     pub fn apply_patch(&mut self, patch: Patch) -> Result<(), InvalidPatch> {
@@ -337,7 +361,6 @@ impl Frontend {
         if let Some(new_cached_value) = new_cached_value {
             self.cached_value = new_cached_value;
         };
-        self.version = std::cmp::max(self.version, patch.version);
         if let Some(seq) = patch.clock.get(&self.actor_id) {
             if *seq > self.seq {
                 self.seq = *seq;

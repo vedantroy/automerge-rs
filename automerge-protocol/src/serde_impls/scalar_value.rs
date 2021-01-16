@@ -50,9 +50,9 @@ impl<'de> Deserialize<'de> for ScalarValue {
                 Ok(ScalarValue::Str(value.to_string()))
             }
 
-            fn visit_none<E>(self) -> Result<ScalarValue, E> 
+            fn visit_none<E>(self) -> Result<ScalarValue, E>
             where
-                E: de::Error
+                E: de::Error,
             {
                 Ok(ScalarValue::Null)
             }

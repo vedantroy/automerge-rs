@@ -1,14 +1,22 @@
 use automerge_protocol as amp;
 
 use super::{
-    new_object_id, random_op_id, value_to_datatype, StateTreeChange, StateTreeComposite,
-    StateTreeList, StateTreeMap, StateTreeTable, StateTreeText, StateTreeValue,
+    random_op_id, StateTreeChange, StateTreeComposite, StateTreeList, StateTreeMap, StateTreeTable,
+    StateTreeText, StateTreeValue,
 };
 use crate::error;
-use crate::path::PathElement;
 use crate::value::Value;
-use std::convert::TryInto;
 use std::iter::Iterator;
+
+pub(crate) struct NewValueRequest<'a, 'b, 'c, 'd> {
+    pub(crate) actor: &'a amp::ActorID,
+    pub(crate) start_op: u64,
+    pub(crate) key: &'b amp::Key,
+    pub(crate) value: &'c Value,
+    pub(crate) parent_obj: &'d amp::ObjectID,
+    pub(crate) insert: bool,
+    pub(crate) pred: Vec<amp::OpID>,
+}
 
 /// A set of conflicting values for the same key, indexed by OpID
 #[derive(Debug, Clone)]
@@ -37,36 +45,57 @@ impl MultiValue {
         })
     }
 
+    pub fn opids(&self) -> impl Iterator<Item = &amp::OpID> {
+        std::iter::once(&self.winning_value.0).chain(self.conflicts.keys())
+    }
+
+    pub(super) fn new_from_value_2(req: NewValueRequest) -> NewValue<MultiValue> {
+        Self::new_from_value(
+            req.actor,
+            req.start_op,
+            req.parent_obj.clone(),
+            req.key,
+            req.value,
+            req.insert,
+            req.pred.into_iter().collect(),
+        )
+    }
+
     pub(super) fn new_from_value(
+        actor: &amp::ActorID,
+        start_op: u64,
         parent_id: amp::ObjectID,
-        key: &PathElement,
+        key: &amp::Key,
         value: &Value,
         insert: bool,
+        pred: Vec<amp::OpID>,
     ) -> NewValue<MultiValue> {
         match value {
             Value::Map(props, amp::MapType::Map) => {
-                let map_id = new_object_id();
+                let make_op_id = amp::OpID(start_op, actor.clone());
                 let make_op = amp::Op {
-                    action: amp::OpType::MakeMap,
-                    obj: parent_id.to_string(),
-                    key: key.to_request_key(),
-                    child: Some(map_id.to_string()),
-                    value: None,
-                    datatype: None,
+                    action: amp::OpType::Make(amp::ObjType::map()),
+                    obj: parent_id,
+                    key: key.clone(),
                     insert,
+                    pred,
                 };
                 let map = im::HashMap::new();
                 let newvalue: NewValue<im::HashMap<String, MultiValue>> =
-                    NewValue::init(map, make_op);
+                    NewValue::init(map, make_op, start_op);
                 props
                     .iter()
                     .fold(newvalue, |newvalue_so_far, (key, value)| {
+                        let start_op = newvalue_so_far.max_op + 1;
                         newvalue_so_far.and_then(|m| {
                             MultiValue::new_from_value(
-                                map_id.clone(),
-                                &PathElement::Key(key.to_string()),
+                                actor,
+                                start_op,
+                                make_op_id.clone().into(),
+                                &key.into(),
                                 value,
                                 false,
+                                Vec::new(),
                             )
                             .map(|v| m.update(key.to_string(), v))
                         })
@@ -75,35 +104,37 @@ impl MultiValue {
                         MultiValue::new_from_statetree_value(
                             random_op_id(),
                             StateTreeValue::Composite(StateTreeComposite::Map(StateTreeMap {
-                                object_id: map_id.clone(),
+                                object_id: make_op_id.clone().into(),
                                 props: map,
                             })),
                         )
                     })
             }
             Value::Map(props, amp::MapType::Table) => {
-                let table_id = new_object_id();
+                let make_table_opid = amp::OpID::new(start_op, actor);
                 let table = im::HashMap::new();
                 let make_op = amp::Op {
-                    action: amp::OpType::MakeTable,
-                    obj: parent_id.to_string(),
-                    key: key.to_request_key(),
-                    child: Some(table_id.to_string()),
-                    value: None,
-                    datatype: None,
+                    action: amp::OpType::Make(amp::ObjType::table()),
+                    obj: parent_id,
+                    key: key.clone(),
                     insert,
+                    pred,
                 };
                 let newvalue: NewValue<im::HashMap<String, MultiValue>> =
-                    NewValue::init(table, make_op);
+                    NewValue::init(table, make_op, start_op);
                 props
                     .iter()
                     .fold(newvalue, |newvalue_so_far, (key, value)| {
+                        let start_op = newvalue_so_far.max_op + 1;
                         newvalue_so_far.and_then(|t| {
                             MultiValue::new_from_value(
-                                table_id.clone(),
-                                &PathElement::Key(key.to_string()),
+                                actor,
+                                start_op,
+                                make_table_opid.clone().into(),
+                                &key.into(),
                                 value,
                                 false,
+                                Vec::new(),
                             )
                             .map(|v| t.update(key.to_string(), v))
                         })
@@ -112,34 +143,37 @@ impl MultiValue {
                         MultiValue::new_from_statetree_value(
                             random_op_id(),
                             StateTreeValue::Composite(StateTreeComposite::Table(StateTreeTable {
-                                object_id: table_id.clone(),
+                                object_id: make_table_opid.clone().into(),
                                 props: table,
                             })),
                         )
                     })
             }
             Value::Sequence(vals) => {
-                let list_id = new_object_id();
+                let make_list_opid = amp::OpID::new(start_op, actor);
                 let elems = im::Vector::new();
                 let make_op = amp::Op {
-                    action: amp::OpType::MakeList,
-                    obj: parent_id.to_string(),
-                    key: key.to_request_key(),
-                    child: Some(list_id.to_string()),
-                    value: None,
-                    datatype: None,
+                    action: amp::OpType::Make(amp::ObjType::list()),
+                    obj: parent_id,
+                    key: key.clone(),
                     insert,
+                    pred,
                 };
-                let newvalue: NewValue<im::Vector<MultiValue>> = NewValue::init(elems, make_op);
+                let newvalue: NewValue<im::Vector<MultiValue>> =
+                    NewValue::init(elems, make_op, start_op);
                 vals.iter()
-                    .enumerate()
-                    .fold(newvalue, |newvalue_so_far, (index, elem)| {
+                    .rev()
+                    .fold(newvalue, |newvalue_so_far, elem| {
+                        let start_op = newvalue_so_far.max_op + 1;
                         newvalue_so_far.and_then(|l| {
                             MultiValue::new_from_value(
-                                list_id.clone(),
-                                &PathElement::Index(index.try_into().unwrap()),
+                                actor,
+                                start_op,
+                                make_list_opid.clone().into(),
+                                &amp::ElementID::Head.into(),
                                 elem,
                                 true,
+                                Vec::new(),
                             )
                             .map(|e| {
                                 let mut new_l = l.clone();
@@ -152,41 +186,40 @@ impl MultiValue {
                         MultiValue::new_from_statetree_value(
                             random_op_id(),
                             StateTreeValue::Composite(StateTreeComposite::List(StateTreeList {
-                                object_id: list_id.clone(),
+                                object_id: make_list_opid.clone().into(),
                                 elements: elems,
                             })),
                         )
                     })
             }
             Value::Text(chars) => {
-                let text_id = new_object_id();
+                let make_text_opid = amp::OpID(start_op, actor.clone());
                 let make_op = amp::Op {
-                    action: amp::OpType::MakeText,
-                    obj: parent_id.to_string(),
-                    key: key.to_request_key(),
-                    child: Some(text_id.to_string()),
-                    value: None,
-                    datatype: None,
+                    action: amp::OpType::Make(amp::ObjType::text()),
+                    obj: parent_id,
+                    key: key.clone(),
                     insert,
+                    pred,
                 };
                 let newvalue: NewValue<im::Vector<MultiChar>> =
-                    NewValue::init(im::Vector::new(), make_op);
+                    NewValue::init(im::Vector::new(), make_op, start_op);
                 chars
                     .iter()
-                    .enumerate()
-                    .fold(newvalue, |newvalue_so_far, (index, c)| {
+                    .rev()
+                    .fold(newvalue, |newvalue_so_far, c| {
+                        let char_start_op = newvalue_so_far.max_op;
+                        let create_char_op = amp::OpID(char_start_op, actor.clone());
                         newvalue_so_far.and_then(|newval_chars| {
                             NewValue::init(
-                                MultiChar::new_from_char(*c),
+                                MultiChar::new_from_char(create_char_op.clone(), *c),
                                 amp::Op {
-                                    action: amp::OpType::Set,
-                                    obj: text_id.to_string(),
-                                    key: amp::RequestKey::Num(index as u64),
-                                    child: None,
-                                    value: Some(amp::ScalarValue::Str(c.to_string())),
-                                    datatype: None,
+                                    action: amp::OpType::Set(amp::ScalarValue::Str(c.to_string())),
+                                    obj: make_text_opid.clone().into(),
+                                    key: amp::ElementID::Head.into(),
                                     insert: true,
+                                    pred: Vec::new(),
                                 },
+                                char_start_op,
                             )
                             .map(|newchar| {
                                 let mut chars = newval_chars.clone();
@@ -199,7 +232,7 @@ impl MultiValue {
                         MultiValue::new_from_statetree_value(
                             random_op_id(),
                             StateTreeValue::Composite(StateTreeComposite::Text(StateTreeText {
-                                object_id: text_id.clone(),
+                                object_id: make_text_opid.clone().into(),
                                 chars: newchars,
                             })),
                         )
@@ -211,14 +244,13 @@ impl MultiValue {
                     StateTreeValue::Leaf(v.clone()),
                 ),
                 amp::Op {
-                    action: amp::OpType::Set,
-                    obj: parent_id.to_string(),
-                    key: key.to_request_key(),
-                    child: None,
-                    value: Some(v.clone()),
-                    datatype: Some(value_to_datatype(v)),
+                    action: amp::OpType::Set(v.clone()),
+                    obj: parent_id,
+                    key: key.clone(),
                     insert,
+                    pred,
                 },
+                start_op,
             ),
         }
     }
@@ -327,6 +359,7 @@ pub(super) struct NewValue<T> {
     value: T,
     ops: Vec<amp::Op>,
     index_updates: im::HashMap<amp::ObjectID, StateTreeComposite>,
+    max_op: u64,
 }
 
 impl<T> NewValue<T> {
@@ -341,11 +374,12 @@ impl<T> NewValue<T> {
         self.ops
     }
 
-    fn init(t: T, op: amp::Op) -> NewValue<T> {
+    fn init(t: T, op: amp::Op, start_op: u64) -> NewValue<T> {
         NewValue {
             value: t,
             ops: vec![op],
             index_updates: im::HashMap::new(),
+            max_op: start_op + 1,
         }
     }
 
@@ -357,10 +391,12 @@ impl<T> NewValue<T> {
         let newvalue = (f)(self.value.clone());
         let mut newops = self.ops.clone();
         newops.extend(newvalue.ops);
+        let num_newops = newops.len();
         NewValue {
             value: newvalue.value,
             ops: newops,
             index_updates: newvalue.index_updates.union(self.index_updates.clone()),
+            max_op: self.max_op + (num_newops as u64),
         }
     }
 
@@ -372,6 +408,7 @@ impl<T> NewValue<T> {
             value: f(self.value),
             ops: self.ops,
             index_updates: self.index_updates,
+            max_op: self.max_op,
         }
     }
 }
@@ -379,23 +416,24 @@ impl<T> NewValue<T> {
 /// This struct exists to constrain the values of a text type to just containing
 /// sequences of chars
 #[derive(Debug, Clone)]
-pub(super) struct MultiChar(im::HashMap<amp::OpID, char>);
+pub(super) struct MultiChar {
+    winning_value: (amp::OpID, char),
+    conflicts: im::HashMap<amp::OpID, char>,
+}
 
 impl MultiChar {
-    pub(super) fn new() -> MultiChar {
-        MultiChar(im::HashMap::new())
+    pub(super) fn new_from_char(opid: amp::OpID, c: char) -> MultiChar {
+        MultiChar {
+            winning_value: (opid, c),
+            conflicts: im::HashMap::new(),
+        }
     }
 
-    pub(super) fn new_from_char(c: char) -> MultiChar {
-        MultiChar(im::HashMap::new().update(random_op_id(), c))
-    }
-
-    pub(super) fn apply_diff(
-        &self,
+    pub(super) fn new_from_diff(
         parent_object_id: &amp::ObjectID,
         diff: &std::collections::HashMap<amp::OpID, amp::Diff>,
     ) -> Result<MultiChar, error::InvalidPatch> {
-        let mut new_values = self.0.clone();
+        let mut opids_and_values_vec: Vec<(amp::OpID, char)> = Vec::new();
         for (opid, subdiff) in diff.iter() {
             match subdiff {
                 amp::Diff::Value(amp::ScalarValue::Str(s)) => {
@@ -405,7 +443,7 @@ impl MultiChar {
                             diff: subdiff.clone(),
                         });
                     } else {
-                        new_values = new_values.update(opid.clone(), s.chars().next().unwrap());
+                        opids_and_values_vec.push((opid.clone(), s.chars().next().unwrap()));
                     }
                 }
                 _ => {
@@ -416,13 +454,71 @@ impl MultiChar {
                 }
             }
         }
-        Ok(MultiChar(new_values))
+        opids_and_values_vec.sort_by(|(o1, _), (o2, _)| o1.cmp(o2));
+        opids_and_values_vec.reverse();
+        match opids_and_values_vec.split_first() {
+            Some(((opid, value), rest)) => Ok(MultiChar {
+                winning_value: (opid.clone(), *value),
+                conflicts: rest.into(),
+            }),
+            None => Err(error::InvalidPatch::DiffCreatedObjectWithNoValue),
+        }
     }
 
-    pub(super) fn default_char(&self) -> Option<char> {
-        let mut opids: Vec<&amp::OpID> = self.0.keys().collect();
-        opids.sort();
-        opids.reverse();
-        opids.first().map(|oid| *self.0.get(*oid).unwrap())
+    pub(super) fn apply_diff(
+        &self,
+        parent_object_id: &amp::ObjectID,
+        diff: &std::collections::HashMap<amp::OpID, amp::Diff>,
+    ) -> Result<MultiChar, error::InvalidPatch> {
+        let mut opids_and_values = self.values();
+        for (opid, subdiff) in diff.iter() {
+            match subdiff {
+                amp::Diff::Value(amp::ScalarValue::Str(s)) => {
+                    if s.len() != 1 {
+                        return Err(error::InvalidPatch::InsertNonTextInTextObject {
+                            object_id: parent_object_id.clone(),
+                            diff: subdiff.clone(),
+                        });
+                    } else {
+                        opids_and_values =
+                            opids_and_values.update(opid.clone(), s.chars().next().unwrap());
+                    }
+                }
+                _ => {
+                    return Err(error::InvalidPatch::InsertNonTextInTextObject {
+                        object_id: parent_object_id.clone(),
+                        diff: subdiff.clone(),
+                    });
+                }
+            }
+        }
+        let mut opids_and_values_vec: Vec<(amp::OpID, char)> =
+            opids_and_values.into_iter().collect();
+        opids_and_values_vec.sort_by(|(o1, _), (o2, _)| o1.cmp(o2));
+        opids_and_values_vec.reverse();
+        match opids_and_values_vec.split_first() {
+            Some(((opid, value), rest)) => Ok(MultiChar {
+                winning_value: (opid.clone(), *value),
+                conflicts: rest.into(),
+            }),
+            None => Err(error::InvalidPatch::DiffCreatedObjectWithNoValue),
+        }
+    }
+
+    pub(super) fn default_char(&self) -> char {
+        self.winning_value.1
+    }
+
+    pub fn default_opid(&self) -> &amp::OpID {
+        &self.winning_value.0
+    }
+
+    pub fn opids(&self) -> impl Iterator<Item = &amp::OpID> {
+        std::iter::once(&self.winning_value.0).chain(self.conflicts.keys())
+    }
+
+    pub fn values(&self) -> im::HashMap<amp::OpID, char> {
+        self.conflicts
+            .update(self.winning_value.0.clone(), self.winning_value.1)
     }
 }

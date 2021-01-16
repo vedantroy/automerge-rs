@@ -512,7 +512,7 @@ impl StateTreeMap {
     pub fn pred_for_key(&self, key: &str) -> Vec<amp::OpID> {
         self.props
             .get(key)
-            .map(|v| v.opids().cloned().collect())
+            .map(|v| vec![v.default_opid()])
             .unwrap_or_else(Vec::new)
     }
 }
@@ -578,7 +578,7 @@ impl StateTreeTable {
     pub fn pred_for_key(&self, key: &str) -> Vec<amp::OpID> {
         self.props
             .get(key)
-            .map(|v| v.opids().cloned().collect())
+            .map(|v| vec![v.default_opid()])
             .unwrap_or_else(Vec::new)
     }
 }
@@ -741,7 +741,7 @@ impl StateTreeText {
     pub fn pred_for_index(&self, index: u32) -> Vec<amp::OpID> {
         self.chars
             .get(index.try_into().unwrap())
-            .map(|v| v.opids().cloned().collect())
+            .map(|v| vec![v.default_opid().clone()])
             .unwrap_or_else(Vec::new)
     }
 }
@@ -903,7 +903,7 @@ impl StateTreeList {
     pub fn pred_for_index(&self, index: u32) -> Vec<amp::OpID> {
         self.elements
             .get(index.try_into().unwrap())
-            .map(|v| v.opids().cloned().collect())
+            .map(|v| vec![v.default_opid()])
             .unwrap_or_else(Vec::new)
     }
 

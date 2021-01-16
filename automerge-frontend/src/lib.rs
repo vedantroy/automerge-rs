@@ -1,4 +1,6 @@
-use automerge_protocol::{ActorID, MapType, ObjectID, Op, OpID, Patch, UncompressedChange};
+use automerge_protocol::{
+    ActorID, ChangeHash, MapType, ObjectID, Op, OpID, Patch, UncompressedChange,
+};
 
 mod error;
 mod mutation;
@@ -54,6 +56,7 @@ enum FrontendState {
     Reconciled {
         root_state: state_tree::StateTree,
         max_op: u64,
+        deps_of_last_received_patch: Vec<ChangeHash>,
     },
 }
 
@@ -107,6 +110,7 @@ impl FrontendState {
                         FrontendState::Reconciled {
                             root_state: new_reconciled_root_state,
                             max_op: patch.max_op,
+                            deps_of_last_received_patch: patch.deps.clone(),
                         },
                     ),
                     _ => (
@@ -131,6 +135,7 @@ impl FrontendState {
                     FrontendState::Reconciled {
                         root_state: new_root_state,
                         max_op: patch.max_op,
+                        deps_of_last_received_patch: patch.deps.clone(),
                     },
                 ))
             }
@@ -165,7 +170,7 @@ impl FrontendState {
         actor: &ActorID,
         change_closure: F,
         seq: u64,
-    ) -> Result<(Option<Vec<Op>>, FrontendState, Value), E>
+    ) -> Result<OptimisticChangeResult, E>
     where
         E: Error,
         F: FnOnce(&mut dyn MutableDocument) -> Result<(), E>,
@@ -186,34 +191,40 @@ impl FrontendState {
                 let new_root_state = mutation_tracker.state.clone();
                 let new_value = new_root_state.value();
                 in_flight_requests.push(seq);
-                Ok((
-                    mutation_tracker.ops(),
-                    FrontendState::WaitingForInFlightRequests {
+                Ok(OptimisticChangeResult {
+                    ops: mutation_tracker.ops(),
+                    new_state: FrontendState::WaitingForInFlightRequests {
                         in_flight_requests,
                         optimistically_updated_root_state: new_root_state,
                         reconciled_root_state,
                         max_op: mutation_tracker.max_op,
                     },
                     new_value,
-                ))
+                    deps: Vec::new(),
+                })
             }
-            FrontendState::Reconciled { root_state, max_op } => {
+            FrontendState::Reconciled {
+                root_state,
+                max_op,
+                deps_of_last_received_patch,
+            } => {
                 let mut mutation_tracker =
                     mutation::MutationTracker::new(root_state.clone(), max_op, actor.clone());
                 change_closure(&mut mutation_tracker)?;
                 let new_root_state = mutation_tracker.state.clone();
                 let new_value = new_root_state.value();
                 let in_flight_requests = vec![seq];
-                Ok((
-                    mutation_tracker.ops(),
-                    FrontendState::WaitingForInFlightRequests {
+                Ok(OptimisticChangeResult {
+                    ops: mutation_tracker.ops(),
+                    new_state: FrontendState::WaitingForInFlightRequests {
                         in_flight_requests,
                         optimistically_updated_root_state: new_root_state,
                         reconciled_root_state: root_state,
                         max_op: mutation_tracker.max_op,
                     },
                     new_value,
-                ))
+                    deps: deps_of_last_received_patch,
+                })
             }
         }
     }
@@ -261,6 +272,7 @@ impl Frontend {
             state: Some(FrontendState::Reconciled {
                 root_state,
                 max_op: 0,
+                deps_of_last_received_patch: Vec::new(),
             }),
             cached_value: Value::Map(HashMap::new(), MapType::Map),
         }
@@ -274,7 +286,7 @@ impl Frontend {
                 let mut front = Frontend::new();
                 let (init_ops, _) =
                     kvs.iter()
-                        .fold((Vec::new(), 0), |(mut ops, max_op), (k, v)| {
+                        .fold((Vec::new(), 1), |(mut ops, max_op), (k, v)| {
                             let (more_ops, max_op) = value::value_to_op_requests(
                                 &front.actor_id,
                                 max_op,
@@ -325,23 +337,23 @@ impl Frontend {
     {
         let start_op = self.state.as_ref().unwrap().max_op() + 1;
         // TODO this leaves the `state` as `None` if there's an error, it shouldn't
-        let (ops, new_state, new_value) = self.state.take().unwrap().optimistically_apply_change(
+        let change_result = self.state.take().unwrap().optimistically_apply_change(
             &self.actor_id,
             change_closure,
             self.seq + 1,
         )?;
-        self.state = Some(new_state);
-        if let Some(operations) = ops {
+        self.state = Some(change_result.new_state);
+        if let Some(ops) = change_result.ops {
             self.seq += 1;
-            self.cached_value = new_value;
+            self.cached_value = change_result.new_value;
             let change = UncompressedChange {
                 start_op,
                 actor_id: self.actor_id.clone(),
                 seq: self.seq,
                 time: system_time().unwrap_or(0),
                 message,
-                deps: Vec::new(),
-                operations,
+                deps: change_result.deps,
+                operations: ops,
                 extra_bytes: Vec::new(),
             };
             Ok(Some(change))
@@ -411,4 +423,11 @@ fn system_time() -> Option<i64> {
         .duration_since(time::UNIX_EPOCH)
         .ok()
         .and_then(|d| i64::try_from(d.as_millis()).ok())
+}
+
+struct OptimisticChangeResult {
+    ops: Option<Vec<Op>>,
+    new_state: FrontendState,
+    new_value: Value,
+    deps: Vec<ChangeHash>,
 }

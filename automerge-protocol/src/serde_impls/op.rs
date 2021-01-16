@@ -523,8 +523,10 @@ mod tests {
             },
         ];
         for (testcase_num, testcase) in testcases.iter().enumerate() {
+            #[allow(clippy::expect_fun_call)]
             let serialized = serde_json::to_string(testcase)
                 .expect(format!("Failed to serialize testcase {}", testcase_num).as_str());
+            #[allow(clippy::expect_fun_call)]
             let deserialized: Op = serde_json::from_str(&serialized)
                 .expect(format!("Failed to deserialize testcase {}", testcase_num).as_str());
             assert_eq!(testcase, &deserialized, "Testcase {} failed", testcase_num);

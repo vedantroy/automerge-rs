@@ -3,8 +3,8 @@ use automerge_backend::Backend;
 use automerge_backend::Change;
 use automerge_protocol as protocol;
 use automerge_protocol::{
-    ActorID, ChangeHash, Diff, DiffEdit, ElementID, MapDiff, MapType, ObjectID, Op, Patch, SeqDiff,
-    SequenceType, UncompressedChange,
+    ActorID, ChangeHash, Diff, DiffEdit, ElementID, MapDiff, MapType, ObjType, ObjectID, Op,
+    OpType, Patch, SeqDiff, SequenceType, UncompressedChange,
 };
 use maplit::hashmap;
 use std::collections::HashSet;
@@ -42,7 +42,7 @@ fn test_apply_local_change() {
         message: None,
         deps: Vec::new(),
         operations: vec![Op {
-            action: amp::OpType::Set("magpie".into()),
+            action: OpType::Set("magpie".into()),
             obj: ObjectID::Root,
             key: "bird".into(),
             pred: Vec::new(),
@@ -262,7 +262,7 @@ fn test_transform_list_indexes_into_element_ids() {
         message: None,
         deps: Vec::new(),
         operations: vec![Op {
-            action: protocol::OpType::Make(amp::ObjType::list()),
+            action: protocol::OpType::Make(ObjType::list()),
             key: "birds".into(),
             obj: ObjectID::Root,
             pred: Vec::new(),
@@ -450,7 +450,7 @@ fn test_handle_list_insertion_and_deletion_in_same_change() {
         start_op: 1,
         operations: vec![Op {
             obj: ObjectID::Root,
-            action: protocol::OpType::Make(amp::ObjType::list()),
+            action: protocol::OpType::Make(ObjType::list()),
             key: "birds".into(),
             insert: false,
             pred: Vec::new(),
@@ -531,7 +531,7 @@ fn test_handle_list_insertion_and_deletion_in_same_change() {
         deps: Vec::new(),
         operations: vec![Op {
             obj: ObjectID::Root,
-            action: protocol::OpType::Make(amp::ObjType::list()),
+            action: protocol::OpType::Make(ObjType::list()),
             key: "birds".into(),
             insert: false,
             pred: Vec::new(),

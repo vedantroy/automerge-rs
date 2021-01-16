@@ -565,3 +565,154 @@ fn allow_interleaving_of_patches_and_changes() {
         }
     );
 }
+
+//it('deps are filled in if the frontend does not have the latest patch', () => {
+//const actor1 = uuid(), actor2 = uuid()
+//const [doc1, change1] = Frontend.change(Frontend.init(actor1), doc => doc.number = 1)
+//const [state1, patch1, binChange1] = Backend.applyLocalChange(Backend.init(), change1)
+
+//const [state1a, patch1a] = Backend.applyChanges(Backend.init(), [binChange1])
+//const doc1a = Frontend.applyPatch(Frontend.init(actor2), patch1a)
+//const [doc2, change2] = Frontend.change(doc1a, doc => doc.number = 2)
+//const [doc3, change3] = Frontend.change(doc2, doc => doc.number = 3)
+//assert.deepStrictEqual(change2, {
+//actor: actor2, seq: 1, startOp: 2, deps: [decodeChange(binChange1).hash], time: change2.time, message: '', ops: [
+//{obj: '_root', action: 'set', key: 'number', insert: false, value: 2, pred: [`1@${actor1}`]}
+//]
+//})
+//assert.deepStrictEqual(change3, {
+//actor: actor2, seq: 2, startOp: 3, deps: [], time: change3.time, message: '', ops: [
+//{obj: '_root', action: 'set', key: 'number', insert: false, value: 3, pred: [`2@${actor2}`]}
+//]
+//})
+
+//const [state2, patch2, binChange2] = Backend.applyLocalChange(state1a, change2)
+//const [state3, patch3, binChange3] = Backend.applyLocalChange(state2, change3)
+//assert.deepStrictEqual(decodeChange(binChange2).deps, [decodeChange(binChange1).hash])
+//assert.deepStrictEqual(decodeChange(binChange3).deps, [decodeChange(binChange2).hash])
+//assert.deepStrictEqual(patch1a.deps, [decodeChange(binChange1).hash])
+//assert.deepStrictEqual(patch2.deps, [])
+
+//const doc2a = Frontend.applyPatch(doc3, patch2)
+//const doc3a = Frontend.applyPatch(doc2a, patch3)
+//const [doc4, change4] = Frontend.change(doc3a, doc => doc.number = 4)
+//assert.deepStrictEqual(change4, {
+//actor: actor2, seq: 3, startOp: 4, time: change4.time, message: '', deps: [], ops: [
+//{obj: '_root', action: 'set', key: 'number', insert: false, value: 4, pred: [`3@${actor2}`]}
+//]
+//})
+//const [state4, patch4, binChange4] = Backend.applyLocalChange(state3, change4)
+//assert.deepStrictEqual(decodeChange(binChange4).deps, [decodeChange(binChange3).hash])
+//})
+#[test]
+fn test_deps_are_filled_in_if_frontend_does_not_have_latest_patch() {
+    let (doc, change1) =
+        Frontend::new_with_initial_state(hashmap! {"number" => amp::ScalarValue::from(1)}.into())
+            .unwrap();
+
+    let mut backend1 = Backend::init();
+    let (_, binchange1) = backend1.apply_local_change(change1).unwrap();
+
+    let mut doc2 = Frontend::new();
+    let mut backend2 = Backend::init();
+    let patch1 = backend2.apply_changes(vec![(*binchange1).clone()]).unwrap();
+    doc2.apply_patch(patch1.clone()).unwrap();
+
+    let change2 = doc2
+        .change::<_, InvalidChangeRequest>(None, |d| {
+            d.add_change(LocalChange::set(
+                Path::root().key("number"),
+                amp::ScalarValue::from(2).into(),
+            ))?;
+            Ok(())
+        })
+        .unwrap()
+        .unwrap();
+
+    let change3 = doc2
+        .change::<_, InvalidChangeRequest>(None, |d| {
+            d.add_change(LocalChange::set(
+                Path::root().key("number"),
+                amp::ScalarValue::from(3).into(),
+            ))?;
+            Ok(())
+        })
+        .unwrap()
+        .unwrap();
+
+    let expected_change2 = amp::UncompressedChange {
+        actor_id: doc2.actor_id.clone(),
+        start_op: 2,
+        seq: 1,
+        time: change2.time,
+        message: None,
+        deps: vec![binchange1.hash],
+        operations: vec![amp::Op {
+            action: amp::OpType::Set(amp::ScalarValue::from(2)),
+            obj: amp::ObjectID::Root,
+            key: "number".into(),
+            insert: false,
+            pred: vec![doc.actor_id.op_id_at(1)],
+        }],
+        extra_bytes: Vec::new(),
+    };
+    assert_eq!(change2, expected_change2);
+
+    let expected_change3 = amp::UncompressedChange {
+        actor_id: doc2.actor_id.clone(),
+        start_op: 3,
+        seq: 2,
+        time: change3.time,
+        message: None,
+        deps: Vec::new(),
+        operations: vec![amp::Op {
+            action: amp::OpType::Set(amp::ScalarValue::from(3)),
+            obj: amp::ObjectID::Root,
+            key: "number".into(),
+            insert: false,
+            pred: vec![doc2.actor_id.op_id_at(2)],
+        }],
+        extra_bytes: Vec::new(),
+    };
+    assert_eq!(change3, expected_change3);
+
+    let (patch2, binchange2) = backend2.apply_local_change(change2).unwrap();
+    let (patch3, binchange3) = backend2.apply_local_change(change3).unwrap();
+
+    assert_eq!(binchange2.deps, vec![binchange1.hash]);
+    assert_eq!(binchange3.deps, vec![binchange2.hash]);
+    assert_eq!(patch1.deps, vec![binchange1.hash]);
+    assert_eq!(patch2.deps, Vec::new());
+
+    doc2.apply_patch(patch2).unwrap();
+    doc2.apply_patch(patch3).unwrap();
+
+    let change4 = doc2
+        .change::<_, InvalidChangeRequest>(None, |d| {
+            d.add_change(LocalChange::set(
+                Path::root().key("number"),
+                amp::ScalarValue::from(4).into(),
+            ))?;
+            Ok(())
+        })
+        .unwrap()
+        .unwrap();
+
+    let expected_change4 = amp::UncompressedChange {
+        actor_id: doc2.actor_id.clone(),
+        start_op: 4,
+        seq: 3,
+        time: change4.time,
+        message: None,
+        deps: Vec::new(),
+        operations: vec![amp::Op {
+            action: amp::OpType::Set(amp::ScalarValue::from(4)),
+            obj: amp::ObjectID::Root,
+            key: "number".into(),
+            insert: false,
+            pred: vec![doc2.actor_id.op_id_at(3)],
+        }],
+        extra_bytes: Vec::new(),
+    };
+    assert_eq!(change4, expected_change4);
+}

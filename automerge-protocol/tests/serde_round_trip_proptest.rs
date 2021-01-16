@@ -1,7 +1,5 @@
 extern crate automerge_protocol as amp;
 use proptest::prelude::*;
-use std::convert::TryInto;
-use std::str::FromStr;
 
 fn arb_maptype() -> impl Strategy<Value = amp::MapType> {
     prop_oneof![Just(amp::MapType::Map), Just(amp::MapType::Table),]

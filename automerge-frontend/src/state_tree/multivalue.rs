@@ -45,10 +45,6 @@ impl MultiValue {
         })
     }
 
-    pub fn opids(&self) -> impl Iterator<Item = &amp::OpID> {
-        std::iter::once(&self.winning_value.0).chain(self.conflicts.keys())
-    }
-
     pub(super) fn new_from_value_2(req: NewValueRequest) -> NewValue<MultiValue> {
         Self::new_from_value(
             req.actor,
@@ -527,10 +523,6 @@ impl MultiChar {
 
     pub fn default_opid(&self) -> &amp::OpID {
         &self.winning_value.0
-    }
-
-    pub fn opids(&self) -> impl Iterator<Item = &amp::OpID> {
-        std::iter::once(&self.winning_value.0).chain(self.conflicts.keys())
     }
 
     pub fn values(&self) -> im::HashMap<amp::OpID, char> {

@@ -25,7 +25,6 @@ impl<'de> Deserialize<'de> for ScalarValue {
             where
                 E: de::Error,
             {
-                println!("Visiting u64");
                 Ok(ScalarValue::Uint(value))
             }
 

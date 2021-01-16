@@ -93,7 +93,7 @@ impl ResolvedRoot {
                 .root
                 .root_map
                 .get(key)
-                .map(|mv| mv.opids().cloned().collect())
+                .map(|mv| vec![mv.default_opid()])
                 .unwrap_or_else(Vec::new),
         });
         let new_state = self

@@ -793,7 +793,7 @@ impl StateTreeList {
         value: MultiValue,
     ) -> Result<StateTreeList, error::MissingIndexError> {
         let mut new_elems = self.elements.clone();
-        if index >= self.elements.len() {
+        if index > self.elements.len() {
             Err(error::MissingIndexError {
                 missing_index: index,
                 size_of_collection: self.elements.len(),

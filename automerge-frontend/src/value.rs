@@ -155,15 +155,17 @@ pub(crate) fn value_to_op_requests(
             };
             let mut op_num = start_op + 1;
             let mut result = vec![make_op];
-            for v in vs.iter().rev() {
+            let mut last_elemid = amp::ElementID::Head;
+            for v in vs.iter() {
                 let (child_requests, new_op_num) = value_to_op_requests(
                     actor,
                     op_num,
                     amp::ObjectID::from(list_op.clone()),
-                    &amp::ElementID::Head.into(),
+                    &last_elemid.clone().into(),
                     v,
                     true,
                 );
+                last_elemid = amp::OpID::new(op_num, actor).into();
                 op_num = new_op_num;
                 result.extend(child_requests);
             }
@@ -178,21 +180,23 @@ pub(crate) fn value_to_op_requests(
                 insert,
                 pred: Vec::new(),
             };
-            let insert_ops: Vec<amp::Op> = chars
-                .iter()
-                .rev()
-                .map(|c| amp::Op {
+            let mut insert_ops: Vec<amp::Op> = Vec::new();
+            let mut last_elemid = amp::ElementID::Head;
+            let mut op_num = start_op + 1;
+            for c in chars.iter() {
+                insert_ops.push(amp::Op {
                     action: amp::OpType::Set(amp::ScalarValue::Str(c.to_string())),
                     obj: amp::ObjectID::from(make_text_op.clone()),
-                    key: amp::ElementID::Head.into(),
+                    key: last_elemid.clone().into(),
                     insert: true,
                     pred: Vec::new(),
-                })
-                .collect();
+                });
+                last_elemid = amp::OpID::new(op_num, actor).into();
+                op_num += 1;
+            }
             let mut ops = vec![make_op];
             ops.extend(insert_ops.into_iter());
-            let new_op_num = start_op + (chars.len() as u64) + 1;
-            (ops, new_op_num)
+            (ops, op_num)
         }
         Value::Map(kvs, map_type) => {
             let make_action = match map_type {

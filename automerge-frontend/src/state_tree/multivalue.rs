@@ -1,7 +1,7 @@
 use automerge_protocol as amp;
 
 use super::{
-    random_op_id, StateTreeChange, StateTreeComposite, StateTreeList, StateTreeMap, StateTreeTable,
+    StateTreeChange, StateTreeComposite, StateTreeList, StateTreeMap, StateTreeTable,
     StateTreeText, StateTreeValue,
 };
 use crate::error;
@@ -102,7 +102,7 @@ impl MultiValue {
                     })
                     .map(|map| {
                         MultiValue::new_from_statetree_value(
-                            random_op_id(),
+                            make_op_id.clone(),
                             StateTreeValue::Composite(StateTreeComposite::Map(StateTreeMap {
                                 object_id: make_op_id.clone().into(),
                                 props: map,
@@ -141,7 +141,7 @@ impl MultiValue {
                     })
                     .map(|table| {
                         MultiValue::new_from_statetree_value(
-                            random_op_id(),
+                            make_table_opid.clone(),
                             StateTreeValue::Composite(StateTreeComposite::Table(StateTreeTable {
                                 object_id: make_table_opid.clone().into(),
                                 props: table,
@@ -162,29 +162,33 @@ impl MultiValue {
                 let newvalue: NewValue<im::Vector<MultiValue>> =
                     NewValue::init(elems, make_op, start_op);
                 vals.iter()
-                    .rev()
-                    .fold(newvalue, |newvalue_so_far, elem| {
-                        let start_op = newvalue_so_far.max_op + 1;
-                        newvalue_so_far.and_then(|l| {
-                            MultiValue::new_from_value(
-                                actor,
-                                start_op,
-                                make_list_opid.clone().into(),
-                                &amp::ElementID::Head.into(),
-                                elem,
-                                true,
-                                Vec::new(),
-                            )
-                            .map(|e| {
-                                let mut new_l = l.clone();
-                                new_l.push_back(e);
-                                new_l
-                            })
-                        })
-                    })
+                    .fold(
+                        (newvalue, amp::ElementID::Head),
+                        |(newvalue_so_far, last_elemid), elem| {
+                            let start_op = newvalue_so_far.max_op + 1;
+                            let updated_newvalue = newvalue_so_far.and_then(|l| {
+                                MultiValue::new_from_value(
+                                    actor,
+                                    start_op,
+                                    make_list_opid.clone().into(),
+                                    &last_elemid.clone().into(),
+                                    elem,
+                                    true,
+                                    Vec::new(),
+                                )
+                                .map(|e| {
+                                    let mut new_l = l.clone();
+                                    new_l.push_back(e);
+                                    new_l
+                                })
+                            });
+                            (updated_newvalue, amp::OpID::new(start_op, actor).into())
+                        },
+                    )
+                    .0
                     .map(|elems| {
                         MultiValue::new_from_statetree_value(
-                            random_op_id(),
+                            make_list_opid.clone(),
                             StateTreeValue::Composite(StateTreeComposite::List(StateTreeList {
                                 object_id: make_list_opid.clone().into(),
                                 elements: elems,
@@ -205,32 +209,41 @@ impl MultiValue {
                     NewValue::init(im::Vector::new(), make_op, start_op);
                 chars
                     .iter()
-                    .rev()
-                    .fold(newvalue, |newvalue_so_far, c| {
-                        let char_start_op = newvalue_so_far.max_op;
-                        let create_char_op = amp::OpID(char_start_op, actor.clone());
-                        newvalue_so_far.and_then(|newval_chars| {
-                            NewValue::init(
-                                MultiChar::new_from_char(create_char_op.clone(), *c),
-                                amp::Op {
-                                    action: amp::OpType::Set(amp::ScalarValue::Str(c.to_string())),
-                                    obj: make_text_opid.clone().into(),
-                                    key: amp::ElementID::Head.into(),
-                                    insert: true,
-                                    pred: Vec::new(),
-                                },
-                                char_start_op,
+                    .fold(
+                        (newvalue, amp::ElementID::Head),
+                        |(newvalue_so_far, last_elemid), c| {
+                            let char_start_op = newvalue_so_far.max_op + 1;
+                            let create_char_op = amp::OpID(char_start_op, actor.clone());
+                            let updated_newvalue = newvalue_so_far.and_then(|newval_chars| {
+                                NewValue::init(
+                                    MultiChar::new_from_char(create_char_op.clone(), *c),
+                                    amp::Op {
+                                        action: amp::OpType::Set(amp::ScalarValue::Str(
+                                            c.to_string(),
+                                        )),
+                                        obj: make_text_opid.clone().into(),
+                                        key: last_elemid.clone().into(),
+                                        insert: true,
+                                        pred: Vec::new(),
+                                    },
+                                    char_start_op,
+                                )
+                                .map(|newchar| {
+                                    let mut chars = newval_chars.clone();
+                                    chars.push_back(newchar);
+                                    chars
+                                })
+                            });
+                            (
+                                updated_newvalue,
+                                amp::OpID::new(char_start_op, actor).into(),
                             )
-                            .map(|newchar| {
-                                let mut chars = newval_chars.clone();
-                                chars.push_back(newchar);
-                                chars
-                            })
-                        })
-                    })
+                        },
+                    )
+                    .0
                     .map(|newchars| {
                         MultiValue::new_from_statetree_value(
-                            random_op_id(),
+                            make_text_opid.clone(),
                             StateTreeValue::Composite(StateTreeComposite::Text(StateTreeText {
                                 object_id: make_text_opid.clone().into(),
                                 chars: newchars,
@@ -238,20 +251,23 @@ impl MultiValue {
                         )
                     })
             }
-            Value::Primitive(v) => NewValue::init(
-                MultiValue::new_from_statetree_value(
-                    random_op_id(),
-                    StateTreeValue::Leaf(v.clone()),
-                ),
-                amp::Op {
-                    action: amp::OpType::Set(v.clone()),
-                    obj: parent_id,
-                    key: key.clone(),
-                    insert,
-                    pred,
-                },
-                start_op,
-            ),
+            Value::Primitive(v) => {
+                let make_op_id = amp::OpID(start_op, actor.clone());
+                NewValue::init(
+                    MultiValue::new_from_statetree_value(
+                        make_op_id,
+                        StateTreeValue::Leaf(v.clone()),
+                    ),
+                    amp::Op {
+                        action: amp::OpType::Set(v.clone()),
+                        obj: parent_id,
+                        key: key.clone(),
+                        insert,
+                        pred,
+                    },
+                    start_op,
+                )
+            }
         }
     }
 
@@ -379,7 +395,7 @@ impl<T> NewValue<T> {
             value: t,
             ops: vec![op],
             index_updates: im::HashMap::new(),
-            max_op: start_op + 1,
+            max_op: start_op,
         }
     }
 
@@ -389,9 +405,9 @@ impl<T> NewValue<T> {
         F: Fn(T) -> NewValue<G>,
     {
         let newvalue = (f)(self.value.clone());
+        let num_newops = newvalue.ops.len();
         let mut newops = self.ops.clone();
         newops.extend(newvalue.ops);
-        let num_newops = newops.len();
         NewValue {
             value: newvalue.value,
             ops: newops,

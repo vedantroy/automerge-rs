@@ -234,48 +234,15 @@ impl Backend {
             .unwrap_or_default())
     }
 
-    fn get_changes_fast(&self, have_deps: &[amp::ChangeHash]) -> Option<Vec<&Change>> {
-        if have_deps.is_empty() {
-            return Some(self.history.iter().collect());
-        }
-
-        let lowest_idx = have_deps
-            .iter()
-            .filter_map(|h| self.history_index.get(h))
-            .min()?
-            + 1;
-
-        let mut missing_changes = vec![];
-        let mut has_seen: HashSet<_> = have_deps.iter().collect();
-        for change in &self.history[lowest_idx..] {
-            let deps_seen = change.deps.iter().filter(|h| has_seen.contains(h)).count();
-            if deps_seen > 0 {
-                if deps_seen != change.deps.len() {
-                    // future change depends on something we haven't seen - fast path cant work
-                    return None;
-                }
-                missing_changes.push(change);
-                has_seen.insert(&change.hash);
-            }
-        }
-
-        // if we get to the end and there is a head we haven't seen then fast path cant work
-        if self.get_heads().iter().all(|h| has_seen.contains(h)) {
-            Some(missing_changes)
-        } else {
-            None
-        }
-    }
-
-    fn get_changes_slow(&self, have_deps: &[amp::ChangeHash]) -> Vec<&Change> {
-        let mut stack = have_deps.to_owned();
+    pub fn get_changes_slow(&self, have_deps: &[amp::ChangeHash]) -> Vec<&Change> {
+        let mut stack: Vec<_> = have_deps.iter().collect();
         let mut has_seen = HashSet::new();
         while let Some(hash) = stack.pop() {
             if has_seen.contains(&hash) {
                 continue;
             }
-            if let Some(idx) = self.history_index.get(&hash) {
-                stack.extend(self.history[*idx].deps.clone());
+            if let Some(change) = self.get_change_by_hash(&hash) {
+                stack.extend(change.deps.iter());
             }
             has_seen.insert(hash);
         }
@@ -333,6 +300,50 @@ impl Backend {
         self.history_index
             .get(hash)
             .and_then(|index| self.history.get(*index))
+    }
+
+    /// Filter the changes down to those that are not transitive dependencies of the heads.
+    ///
+    /// Thus a graph with these heads has not seen the remaining changes.
+    pub fn filter_changes(
+        &self,
+        heads: &[amp::ChangeHash],
+        changes: &mut HashSet<amp::ChangeHash>,
+    ) {
+        // TODO: with a topological sort we might be able to quicken some cases where changes lie
+        // to the right of the heads in our history (thus they are newer or concurrent).
+        // This may help to avoid searching all the predecessors of the heads when we know they
+        // won't be found.
+        let mut queue: VecDeque<_> = heads.iter().collect();
+        let mut seen = HashSet::new();
+        while let Some(hash) = queue.pop_front() {
+            if seen.contains(hash) {
+                continue;
+            }
+            seen.insert(hash);
+
+            let removed = changes.remove(&hash);
+            if changes.is_empty() {
+                break;
+            }
+
+            for dep in self
+                .get_change_by_hash(&hash)
+                .map(|c| c.deps.as_slice())
+                .unwrap_or_default()
+            {
+                // if we just removed something from our hashes then it is likely there is more
+                // down here so do a quick inspection on the children.
+                // When we don't remove anything it is less likely that there is something down
+                // that chain so delay it.
+                if removed {
+                    queue.push_front(dep)
+                } else {
+                    queue.push_back(dep)
+                }
+            }
+        }
+>>>>>>> fd1b56c (Filter sent hashes down to only what they haven't seen)
     }
 
     /// Filter the changes down to those that are not transitive dependencies of the heads.

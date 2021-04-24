@@ -268,18 +268,14 @@ impl Backend {
     }
 
     fn get_changes_slow(&self, have_deps: &[amp::ChangeHash]) -> Vec<&Change> {
-        let mut stack: Vec<_> = have_deps.iter().collect();
+        let mut stack = have_deps.to_owned();
         let mut has_seen = HashSet::new();
         while let Some(hash) = stack.pop() {
             if has_seen.contains(&hash) {
                 continue;
             }
-            if let Some(change) = self
-                .history_index
-                .get(&hash)
-                .and_then(|i| self.history.get(*i))
-            {
-                stack.extend(change.deps.iter());
+            if let Some(idx) = self.history_index.get(&hash) {
+                stack.extend(self.history[*idx].deps.clone());
             }
             has_seen.insert(hash);
         }
@@ -289,7 +285,7 @@ impl Backend {
             .collect()
     }
 
-    pub fn get_changes(&self, have_deps: &[amp::ChangeHash]) -> Vec<&Change> {
+    fn get_changes(&self, have_deps: &[amp::ChangeHash]) -> Vec<&Change> {
         if let Some(changes) = self.get_changes_fast(have_deps) {
             changes
         } else {

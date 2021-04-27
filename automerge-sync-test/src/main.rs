@@ -1,8 +1,8 @@
-use criterion::black_box;
 use std::time::{Duration, Instant};
 
 use automerge::{Backend, Frontend, InvalidChangeRequest, LocalChange, Path, Primitive, Value};
 use automerge_backend::SyncState;
+use criterion::black_box;
 
 fn sync(
     a: &mut Backend,
@@ -105,7 +105,7 @@ fn sync_per_change(count: u32, sync_interval: u32) -> (Duration, Duration, Durat
 }
 
 fn sync_matrix() {
-    for count in [1000, 2000, 5000, 10_000, 20_000, 50_000, 100_000].iter() {
+    for count in [1000, 2000, 5000, 10_000].iter() {
         for interval in [1, 10, 100, 1000, 10_000, 100_000].iter().rev() {
             if interval <= count {
                 let start = Instant::now();

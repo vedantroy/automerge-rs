@@ -849,24 +849,24 @@ fn group_doc_ops(changes: &[amp::UncompressedChange], actors: &[amp::ActorId]) -
 }
 
 fn new_group_doc_ops(changes: &[amp::UncompressedChange], actors: &[amp::ActorId]) -> Vec<DocOp> {
-    let mut is_seq = HashSet::<amp::ObjectId>::new();
     let mut ops = Vec::new();
 
     for change in changes {
-        for (i, op) in change.operations.iter().enumerate() {
-            let opid = amp::OpId(change.start_op + i as u64, change.actor_id.clone());
-            if let amp::OpType::Make(amp::ObjType::Sequence(_)) = op.action {
-                is_seq.insert(opid.clone().into());
-            }
+        for op in &change.operations {
+            let pred = op
+                .pred
+                .iter()
+                .map(|id| (id.0, actors.iter().position(|a| a == &id.1).unwrap()))
+                .collect::<Vec<_>>();
 
             ops.push(DocOp {
-                actor: actors.iter().position(|a| a == &opid.1).unwrap(),
-                ctr: opid.0,
+                actor: actors.iter().position(|a| a == &change.actor_id).unwrap(),
+                ctr: change.start_op + 1,
                 action: op.action.clone(),
                 obj: op.obj.clone(),
                 key: op.key.clone(),
-                succ: Vec::new(),
-                pred: Vec::new(),
+                succ: Vec::new(), // TODO: work this out
+                pred,
                 insert: op.insert,
             });
         }

@@ -780,13 +780,25 @@ fn group_doc_ops(changes: &[amp::UncompressedChange], actors: &[amp::ActorId]) -
                         insert: op.insert,
                     },
                 );
+        }
+    }
+
+    for change in changes {
+        for (i, op) in change.operations.iter().enumerate() {
+            let opid = amp::OpId(change.start_op + i as u64, change.actor_id.clone());
+            let objid = op.obj.clone();
+            let key = if op.insert {
+                opid.clone().into()
+            } else {
+                op.key.clone()
+            };
 
             for pred in &op.pred {
                 by_obj_id
-                    .entry(objid.clone())
-                    .or_default()
-                    .entry(key.clone())
-                    .or_default()
+                    .get_mut(&objid)
+                    .unwrap()
+                    .get_mut(&key)
+                    .unwrap()
                     .get_mut(pred)
                     .unwrap()
                     .succ
@@ -836,6 +848,33 @@ fn group_doc_ops(changes: &[amp::UncompressedChange], actors: &[amp::ActorId]) -
     ops
 }
 
+fn new_group_doc_ops(changes: &[amp::UncompressedChange], actors: &[amp::ActorId]) -> Vec<DocOp> {
+    let mut is_seq = HashSet::<amp::ObjectId>::new();
+    let mut ops = Vec::new();
+
+    for change in changes {
+        for (i, op) in change.operations.iter().enumerate() {
+            let opid = amp::OpId(change.start_op + i as u64, change.actor_id.clone());
+            if let amp::OpType::Make(amp::ObjType::Sequence(_)) = op.action {
+                is_seq.insert(opid.clone().into());
+            }
+
+            ops.push(DocOp {
+                actor: actors.iter().position(|a| a == &opid.1).unwrap(),
+                ctr: opid.0,
+                action: op.action.clone(),
+                obj: op.obj.clone(),
+                key: op.key.clone(),
+                succ: Vec::new(),
+                pred: Vec::new(),
+                insert: op.insert,
+            });
+        }
+    }
+
+    ops
+}
+
 fn get_heads(changes: &[amp::UncompressedChange]) -> HashSet<amp::ChangeHash> {
     changes.iter().fold(HashSet::new(), |mut acc, c| {
         if let Some(hash) = c.hash {
@@ -869,6 +908,66 @@ pub(crate) fn encode_document(
     let (change_bytes, change_info) = ChangeEncoder::encode_changes(changes, &actors);
 
     let doc_ops = group_doc_ops(changes, &actors);
+
+    let (ops_bytes, ops_info) = DocOpEncoder::encode_doc_ops(&doc_ops, &mut actors);
+
+    bytes.extend(&MAGIC_BYTES);
+    bytes.extend(vec![0, 0, 0, 0]); // we dont know the hash yet so fill in a fake
+    bytes.push(BLOCK_TYPE_DOC);
+
+    let mut chunk = Vec::new();
+
+    actors.len().encode(&mut chunk)?;
+
+    for a in &actors {
+        a.to_bytes().encode(&mut chunk)?;
+    }
+
+    heads.len().encode(&mut chunk)?;
+    for head in heads.iter().sorted() {
+        chunk.write_all(&head.0).unwrap();
+    }
+
+    chunk.extend(change_info);
+    chunk.extend(ops_info);
+
+    chunk.extend(change_bytes);
+    chunk.extend(ops_bytes);
+
+    leb128::write::unsigned(&mut bytes, chunk.len() as u64).unwrap();
+
+    bytes.extend(&chunk);
+
+    hasher.input(&bytes[CHUNK_START..bytes.len()]);
+    let hash_result = hasher.result();
+    //let hash: amp::ChangeHash = hash_result[..].try_into().unwrap();
+
+    bytes.splice(HASH_RANGE, hash_result[0..4].iter().copied());
+
+    Ok(bytes)
+}
+
+pub(crate) fn new_encode_document(
+    changes: &[amp::UncompressedChange],
+) -> Result<Vec<u8>, AutomergeError> {
+    let mut bytes: Vec<u8> = Vec::new();
+    let mut hasher = Sha256::new();
+
+    let heads = get_heads(changes);
+
+    // this assumes that all actor_ids referenced are seen in changes.actor_id which is true
+    // so long as we have a full history
+    let mut actors: Vec<_> = changes
+        .iter()
+        .map(|c| &c.actor_id)
+        .unique()
+        .sorted()
+        .cloned()
+        .collect();
+
+    let (change_bytes, change_info) = ChangeEncoder::encode_changes(changes, &actors);
+
+    let doc_ops = new_group_doc_ops(changes, &actors);
 
     let (ops_bytes, ops_info) = DocOpEncoder::encode_doc_ops(&doc_ops, &mut actors);
 

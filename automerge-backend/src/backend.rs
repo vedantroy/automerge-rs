@@ -9,7 +9,7 @@ use automerge_protocol as amp;
 
 use crate::{
     actor_map::ActorMap,
-    change::encode_document,
+    change::{encode_document, new_encode_document},
     error::AutomergeError,
     event_handlers::{EventHandlerId, EventHandlers},
     internal::ObjectId,
@@ -336,7 +336,7 @@ impl Backend {
                 changes.push((&self.history[*change_index]).into())
             }
         }
-        encode_document(&changes)
+        new_encode_document(&changes)
     }
 
     // allow this for API reasons

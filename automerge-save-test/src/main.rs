@@ -3,7 +3,7 @@ use rand::{distributions::Alphanumeric, thread_rng, Rng};
 
 fn main() {
     for frontends_count in &[2, 5, 10] {
-        for changes_count in &[10, 100, 1000, 10_000] {
+        for changes_count in &[10, 100, 200] {
             for sync_prob in &[0.2, 0.5, 0.8] {
                 let backend = measure_text(*frontends_count, *changes_count, *sync_prob);
 
@@ -13,14 +13,20 @@ fn main() {
                 println!();
 
                 println!("text");
-                println!("old save: {}", backend.save().unwrap().len());
-                println!("new save: {}", backend.new_save().unwrap().len());
+                let old = backend.save().unwrap_or_default().len();
+                let new = backend.new_save().unwrap_or_default().len();
+                println!("old save: {}", old);
+                println!("new save: {}", new);
+                println!("ratio: {:.4}", new as f64 / old as f64);
                 println!();
 
                 let backend = measure_map(*frontends_count, *changes_count, *sync_prob);
                 println!("map");
-                println!("old save: {}", backend.save().unwrap().len());
-                println!("new save: {}", backend.new_save().unwrap().len());
+                let old = backend.save().unwrap_or_default().len();
+                let new = backend.new_save().unwrap_or_default().len();
+                println!("old save: {}", old);
+                println!("new save: {}", new);
+                println!("ratio: {:.4}", new as f64 / old as f64);
                 println!();
                 println!();
             }

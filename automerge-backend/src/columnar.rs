@@ -809,10 +809,13 @@ impl ChangeEncoder {
         I: IntoIterator<Item = &'c amp::UncompressedChange>,
     {
         let mut index_by_hash: HashMap<amp::ChangeHash, usize> = HashMap::new();
-        for (index, change) in changes.into_iter().enumerate() {
+        let changes = changes.into_iter().collect::<Vec<_>>();
+        for (index, change) in changes.iter().enumerate() {
             if let Some(hash) = change.hash {
                 index_by_hash.insert(hash, index);
             }
+        }
+        for change in changes {
             self.actor
                 .append_value(actors.iter().position(|a| a == &change.actor_id).unwrap());
             self.seq.append_value(change.seq);

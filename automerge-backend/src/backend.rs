@@ -326,6 +326,19 @@ impl Backend {
         encode_document(&changes)
     }
 
+    pub fn new_save(&self) -> Result<Vec<u8>, AutomergeError> {
+        let mut actors = self.states.keys().collect::<Vec<_>>();
+        actors.sort();
+
+        let mut changes = Vec::new();
+        for actor in actors {
+            for change_index in self.states.get(actor).unwrap().iter() {
+                changes.push((&self.history[*change_index]).into())
+            }
+        }
+        encode_document(&changes)
+    }
+
     // allow this for API reasons
     #[allow(clippy::needless_pass_by_value)]
     pub fn load(data: Vec<u8>) -> Result<Self, AutomergeError> {

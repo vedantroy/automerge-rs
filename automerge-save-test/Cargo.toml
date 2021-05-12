@@ -1,0 +1,10 @@
+[package]
+name = "automerge-save-test"
+version = "0.1.0"
+edition = "2018"
+
+[dependencies]
+automerge = { path = "../automerge" }
+automerge-protocol = { path = "../automerge-protocol" }
+automerge-frontend = { path = "../automerge-frontend" }
+rand = "*"

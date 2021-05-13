@@ -1,11 +1,14 @@
 //#![feature(set_stdio)]
+#![feature(integer_atomics, const_fn)]
 
 mod types;
 
 use std::{
+    alloc::{GlobalAlloc, Layout, System},
     collections::{HashMap, HashSet},
     convert::TryFrom,
     fmt::Display,
+    sync::atomic::{AtomicU64, Ordering},
 };
 
 use automerge_backend::{AutomergeError, Backend, Change, SyncMessage, SyncState};
@@ -31,9 +34,41 @@ fn array<T: Serialize>(data: &[T]) -> Result<Array, JsValue> {
     Ok(result)
 }
 
-#[cfg(feature = "wee_alloc")]
+// allocator, mem currently allocated/in use, mem deallocated
+pub struct Trallocator<A: GlobalAlloc>(pub A, AtomicU64, AtomicU64);
+
+unsafe impl<A: GlobalAlloc> GlobalAlloc for Trallocator<A> {
+    unsafe fn alloc(&self, l: Layout) -> *mut u8 {
+        self.1.fetch_add(l.size() as u64, Ordering::SeqCst);
+        self.0.alloc(l)
+    }
+    unsafe fn dealloc(&self, ptr: *mut u8, l: Layout) {
+        self.0.dealloc(ptr, l);
+        self.1.fetch_sub(l.size() as u64, Ordering::SeqCst);
+        self.2.fetch_add(l.size() as u64, Ordering::SeqCst);
+    }
+}
+
+//#[cfg(feature = "wee_alloc")]
 #[global_allocator]
-static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
+static ALLOC: Trallocator<System> = Trallocator::new(System);
+//static ALLOC: Trallocator<wee_alloc::WeeAlloc> = Trallocator::new(wee_alloc::WeeAlloc::INIT);
+
+impl<A: GlobalAlloc> Trallocator<A> {
+    pub const fn new(a: A) -> Self {
+        Trallocator(a, AtomicU64::new(0), AtomicU64::new(0))
+    }
+
+    pub fn reset(&self) {
+        self.1.store(0, Ordering::SeqCst);
+    }
+    pub fn get_cur_mem(&self) -> u64 {
+        self.1.load(Ordering::SeqCst)
+    }
+    pub fn get_total_dealloc(&self) -> u64 {
+        self.2.load(Ordering::SeqCst)
+    }
+}
 
 fn js_to_rust<T: DeserializeOwned>(value: &JsValue) -> Result<T, JsValue> {
     value.into_serde().map_err(json_error_to_js)
@@ -101,6 +136,16 @@ impl JsSyncState {
         let hashes_set: HashSet<ChangeHash> = hashes_map.keys().cloned().collect();
         self.0.sent_hashes = hashes_set
     }
+}
+
+#[wasm_bindgen(js_name = curMem)]
+pub fn cur_mem() -> u64 {
+    ALLOC.get_cur_mem()
+}
+
+#[wasm_bindgen(js_name = totalDealloc)]
+pub fn total_dealloc() -> u64 {
+    ALLOC.get_total_dealloc()
 }
 
 #[wasm_bindgen]
